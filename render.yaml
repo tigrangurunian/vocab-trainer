@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: vocab-trainer
+    env: node
+    plan: free
+    autoDeploy: true
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: /data/vocab.db
+      - key: PORT
+        value: 3000
+    disk:
+      name: app-data
+      mountPath: /data
+      sizeGB: 1

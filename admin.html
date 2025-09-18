@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin DB - Vocab Trainer</title>
+  <style>
+    :root { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    body { margin: 24px; background: #0b1020; color: #e6e9f2; }
+    h1 { margin-top: 0; }
+    .bar { display:flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+    button { cursor:pointer; background:#1f2a4d; color:#e6e9f2; border:1px solid #31406d; padding:8px 12px; border-radius:8px; }
+    button:hover { background:#273360; }
+    input, textarea { width: 100%; background:#101733; color:#e6e9f2; border:1px solid #31406d; border-radius:8px; padding:8px; }
+    .layout { display:grid; grid-template-columns: 300px 1fr; gap: 16px; }
+    .panel { background:#0f162f; border:1px solid #2a3863; border-radius:12px; padding:12px; }
+    ul { list-style:none; padding:0; margin:0; }
+    li { padding:6px 8px; border-radius:8px; display:flex; justify-content:space-between; align-items:center; }
+    li:hover { background:#131b39; }
+    .key { font-weight:600; }
+    .muted { color:#9aa4c4; font-size: 12px; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .danger { background:#421b1b; border-color:#6d3131; }
+    .danger:hover { background:#5a2323; }
+    .success { background:#1b3f2b; border-color:#2d6d46; }
+    .success:hover { background:#24583b; }
+    .mono { font-family: ui-monospace, Menlo, Monaco, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+    .footer { margin-top: 16px; color:#9aa4c4; font-size: 12px; }
+    .hl { color:#60a5fa; }
+  </style>
+</head>
+<body>
+  <h1>Admin DB — <span class="hl">Vocab Trainer</span></h1>
+  <div class="bar">
+    <button id="refreshBtn">Rafraîchir</button>
+    <div id="status" class="muted">Prêt</div>
+  </div>
+
+  <div class="layout">
+    <div class="panel">
+      <h3>Clés</h3>
+      <ul id="keysList"></ul>
+    </div>
+    <div class="panel">
+      <h3>Détail</h3>
+      <div class="row" style="gap:12px;">
+        <input id="keyInput" placeholder="clé" />
+        <button id="loadBtn">Charger</button>
+      </div>
+      <div style="margin-top:8px;">
+        <textarea id="valueInput" rows="16" class="mono" placeholder="value JSON"></textarea>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="saveBtn" class="success">Enregistrer</button>
+        <button id="deleteBtn" class="danger">Supprimer</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:16px;">
+    <h3>Préférences Utilisateur</h3>
+    <div class="row" style="gap:12px;">
+      <select id="usersSelect"></select>
+      <button id="usersRefreshBtn">Rafraîchir</button>
+      <button id="loadPrefsBtn">Charger prefs</button>
+    </div>
+    <div style="margin-top:8px;">
+      <textarea id="prefsTextarea" rows="14" class="mono" placeholder="prefs JSON"></textarea>
+    </div>
+    <div class="row" style="margin-top:8px;">
+      <button id="savePrefsBtn" class="success">Enregistrer prefs</button>
+    </div>
+  </div>
+
+  <div class="footer">
+    Endpoints: GET /api/kv, GET/PUT/DELETE /api/kv/:key — Health: /api/health
+  </div>
+
+  <script>
+    const $ = sel => document.querySelector(sel);
+    const keysList = $('#keysList');
+    const keyInput = $('#keyInput');
+    const valueInput = $('#valueInput');
+    const status = $('#status');
+    const usersSelect = $('#usersSelect');
+    const prefsTextarea = $('#prefsTextarea');
+
+    async function api(path, opts) {
+      const res = await fetch(path, opts);
+      if (!res.ok) throw new Error(await res.text());
+      return res.headers.get('content-type')?.includes('application/json') ? res.json() : res.text();
+    }
+
+    async function refreshKeys() {
+      setStatus('Chargement...');
+      try {
+        const data = await api('/api/kv');
+        keysList.innerHTML = '';
+        (data.items || []).forEach(item => {
+          const li = document.createElement('li');
+          const left = document.createElement('div');
+          left.innerHTML = `<div class="key">${item.key}</div><div class="muted">maj: ${new Date(item.updated_at * 1000).toLocaleString()}</div>`;
+          const right = document.createElement('div');
+          const btn = document.createElement('button');
+          btn.textContent = 'Ouvrir';
+          btn.addEventListener('click', () => loadKey(item.key));
+          right.appendChild(btn);
+          li.appendChild(left);
+          li.appendChild(right);
+          keysList.appendChild(li);
+        });
+        setStatus('OK');
+      } catch (e) {
+        console.error(e);
+        setStatus('Erreur: ' + e.message);
+      }
+    }
+
+    function setStatus(text) { status.textContent = text; }
+
+    async function loadKey(key) {
+      try {
+        setStatus('Chargement clé...');
+        keyInput.value = key;
+        const data = await api('/api/kv/' + encodeURIComponent(key));
+        valueInput.value = JSON.stringify(data.value, null, 2);
+        setStatus('OK');
+      } catch (e) {
+        valueInput.value = '';
+        setStatus('Erreur: ' + e.message);
+      }
+    }
+
+    async function saveCurrent() {
+      const key = keyInput.value.trim();
+      if (!key) return alert('Clé manquante');
+      let valueRaw = valueInput.value.trim();
+      let parsed;
+      try { parsed = valueRaw ? JSON.parse(valueRaw) : null; }
+      catch(e) { return alert('JSON invalide: ' + e.message); }
+      setStatus('Enregistrement...');
+      try {
+        await api('/api/kv/' + encodeURIComponent(key), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value: parsed })
+        });
+        setStatus('Enregistré');
+        refreshKeys();
+      } catch (e) {
+        setStatus('Erreur: ' + e.message);
+      }
+    }
+
+    async function deleteCurrent() {
+      const key = keyInput.value.trim();
+      if (!key) return alert('Clé manquante');
+      if (!confirm(`Supprimer la clé "${key}" ?`)) return;
+      setStatus('Suppression...');
+      try {
+        await api('/api/kv/' + encodeURIComponent(key), { method: 'DELETE' });
+        keyInput.value = '';
+        valueInput.value = '';
+        setStatus('Supprimé');
+        refreshKeys();
+      } catch (e) {
+        setStatus('Erreur: ' + e.message);
+      }
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', refreshKeys);
+    document.getElementById('loadBtn').addEventListener('click', () => {
+      const k = keyInput.value.trim();
+      if (k) loadKey(k);
+    });
+    document.getElementById('saveBtn').addEventListener('click', saveCurrent);
+    document.getElementById('deleteBtn').addEventListener('click', deleteCurrent);
+
+    refreshKeys();
+
+    // ---- Users prefs admin ----
+    async function refreshUsersList() {
+      try {
+        const data = await api('/api/users');
+        usersSelect.innerHTML = '';
+        (data.items || []).forEach(u => {
+          const opt = document.createElement('option');
+          opt.value = u.id;
+          opt.textContent = `${u.name} (${u.id})`;
+          usersSelect.appendChild(opt);
+        });
+      } catch (e) {
+        console.error(e);
+        setStatus('Erreur chargement utilisateurs: ' + e.message);
+      }
+    }
+
+    async function loadPrefsForSelected() {
+      const id = usersSelect.value;
+      if (!id) return alert('Choisir un utilisateur');
+      setStatus('Chargement prefs...');
+      try {
+        const res = await fetch(`/api/users/${encodeURIComponent(id)}/prefs`);
+        if (res.status === 404) {
+          prefsTextarea.value = '';
+          setStatus('Aucune prefs pour cet utilisateur');
+          return;
+        }
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        prefsTextarea.value = JSON.stringify(data.prefs || {}, null, 2);
+        setStatus('OK');
+      } catch (e) {
+        setStatus('Erreur: ' + e.message);
+      }
+    }
+
+    async function savePrefsForSelected() {
+      const id = usersSelect.value;
+      if (!id) return alert('Choisir un utilisateur');
+      let parsed;
+      try { parsed = prefsTextarea.value.trim() ? JSON.parse(prefsTextarea.value) : {}; }
+      catch(e) { return alert('JSON invalide: ' + e.message); }
+      setStatus('Enregistrement prefs...');
+      try {
+        await api(`/api/users/${encodeURIComponent(id)}/prefs`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prefs: parsed })
+        });
+        setStatus('Prefs enregistrées');
+      } catch (e) {
+        setStatus('Erreur: ' + e.message);
+      }
+    }
+
+    document.getElementById('usersRefreshBtn').addEventListener('click', refreshUsersList);
+    document.getElementById('loadPrefsBtn').addEventListener('click', loadPrefsForSelected);
+    document.getElementById('savePrefsBtn').addEventListener('click', savePrefsForSelected);
+
+    refreshUsersList();
+  </script>
+</body>
+</html>

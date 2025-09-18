@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vocab Trainer FR ↔ EN</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header class="app-header">
+    <h1>Vocab Trainer <span class="mascot" aria-hidden="true" title="Mascotte">🤖</span></h1>
+    <p>Apprends le vocabulaire Français → Anglais</p>
+    <div class="header-actions">
+      <span id="userBadge" class="badge user-badge" title="Utilisateur actif" style="margin-right:8px;">—</span>
+      <button class="tab-button icon" data-tab="prefs" aria-label="Préférences" title="Préférences">🛠️</button>
+    </div>
+    <div class="deck-bar">
+      <label for="deckSelect">Vocabulaire:</label>
+      <select id="deckSelect" class="deck-select"></select>
+      <button id="gotoManageBtn" class="tab-button icon" aria-label="Vocabulaire" title="Vocabulaire" style="margin-left:8px;">⚙️</button>
+      <span style="width:1px;height:24px;background:var(--border);display:inline-block;margin:0 6px;"></span>
+      <label for="userSelect">Utilisateur:</label>
+      <select id="userSelect" class="deck-select"></select>
+      <button id="gotoUsersHeaderBtn" class="tab-button icon" aria-label="Utilisateurs" title="Utilisateurs" style="margin-left:6px;">👤</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <nav class="tabs">
+      <button class="tab-button active" data-tab="review">Révision</button>
+    </nav>
+
+    <section id="manage" class="tab">
+      <div class="card">
+        <div class="card-header">
+          <h2>Ajouter un mot</h2>
+          <div class="actions">
+            <button id="newDeckBtn" class="secondary" title="Créer un nouveau vocabulaire">Nouveau vocabulaire</button>
+          </div>
+        </div>
+        <form id="addWordForm" class="form-row" autocomplete="off">
+          <div class="field">
+            <label for="frInput">Français</label>
+            <input id="frInput" type="text" placeholder="ex: pomme" required />
+          </div>
+          <div class="field">
+            <label for="enInput">Anglais</label>
+            <input id="enInput" type="text" placeholder="ex: apple" required />
+          </div>
+          <button type="submit" class="primary">Ajouter</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Mes mots</h2>
+          <div class="actions">
+            <button id="exportBtn" class="secondary">Exporter</button>
+            <label class="import-label secondary">
+              Importer
+              <input id="importInput" type="file" accept="application/json" hidden />
+            </label>
+            <button id="clearAllBtn" class="danger" title="Supprimer tous les mots">Tout effacer</button>
+          </div>
+        </div>
+        <div id="wordsEmpty" class="empty">Aucun mot dans ce vocabulaire. Ajoutez-en ci-dessus.</div>
+        <ul id="wordsList" class="words-list"></ul>
+      </div>
+    </section>
+
+    <section id="review" class="tab active">
+      <div class="card">
+        <div class="card-header">
+          <h2>Mode Révision</h2>
+          <div class="actions">
+            <button id="startReviewBtn" class="primary">Démarrer une révision</button>
+            <button id="shuffleToggle" class="secondary" aria-pressed="true">Aléatoire: ON</button>
+          </div>
+        </div>
+        <div id="reviewEmpty" class="empty">Ajoutez des mots dans l’onglet « Liste & Ajout » pour ce vocabulaire pour commencer.</div>
+
+        <div id="quizArea" class="quiz hidden">
+          <div class="score-row">
+            <div>Round: <span id="roundNum">1</span></div>
+            <div>Question: <span id="questionIndex">1</span>/<span id="questionTotal">0</span></div>
+            <div>Score: <span id="score">0</span></div>
+          </div>
+          <div class="flashcard">
+            <div class="prompt-label">Traduire en anglais:</div>
+            <div id="prompt" class="prompt">—</div>
+          </div>
+          <form id="answerForm" autocomplete="off" class="form-row">
+            <div class="field grow">
+              <label for="answerInput">Votre réponse</label>
+              <input id="answerInput" type="text" placeholder="écrire la traduction en anglais" />
+            </div>
+            <button class="primary" type="submit">Valider</button>
+          </form>
+          <div id="feedback" class="feedback"></div>
+        </div>
+
+        <div id="reviewDone" class="done hidden">
+          <h3>Bravo ! Tout est correct 🎉</h3>
+          <p>Score final: <strong><span id="finalScore">0</span></strong></p>
+          <button id="restartAllBtn" class="secondary">Refaire une révision</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Historique des révisions</h2>
+          <div class="actions">
+            <button id="clearHistoryBtn" class="danger" title="Effacer l’historique pour ce vocabulaire">Effacer l’historique</button>
+          </div>
+        </div>
+        <div id="historyEmpty" class="empty">Aucun historique pour ce vocabulaire.</div>
+        <table id="historyTable" class="history-grid">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Durée (min)</th>
+              <th>Questions</th>
+              <th>1er coup (%)</th>
+              <th>Erreurs</th>
+              <th>Temps moy (s)</th>
+              <th>Détails</th>
+            </tr>
+          </thead>
+          <tbody id="historyTbody"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Statistiques</h2>
+        </div>
+        <div>
+          <canvas id="statsChart" height="140"></canvas>
+        </div>
+      </div>
+
+    </section>
+
+    <section id="prefs" class="tab">
+      <div class="card">
+        <button class="tab-button icon card-close" data-tab="manage" aria-label="Fermer" title="Fermer">❌</button>
+        <h2>Préférences</h2>
+        <div class="field" style="margin-top:8px;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input id="fireworksCheckbox" type="checkbox" checked />
+            <span>Feu d'artifice pour réponse correcte</span>
+          </label>
+          <small class="hint">Décochez pour désactiver l'animation de confettis lors d'une bonne réponse.</small>
+        </div>
+
+        <div class="field" style="margin-top:14px;">
+          <label for="themeSelect">Thème</label>
+          <select id="themeSelect" class="deck-select">
+            <option value="dark">Nuit</option>
+            <option value="light">Jour</option>
+          </select>
+          <small class="hint">Le thème Nuit conserve le style actuel. Le thème Jour applique un style clair.</small>
+        </div>
+
+        <div class="field" style="margin-top:14px;">
+          <label for="mascotSelect">Mascotte</label>
+          <select id="mascotSelect" class="deck-select">
+            <option value="🦊">🦊</option>
+            <option value="🐵">🐵</option>
+            <option value="🐒">🐒</option>
+            <option value="🐨">🐨</option>
+            <option value="🐸">🐸</option>
+            <option value="🎓">🎓</option>
+            <option value="🤖">🤖</option>
+            <option value="🦁">🦁</option>
+            <option value="🐯">🐯</option>
+            <option value="👾">👾</option>
+            <option value="🐉">🐉</option>
+            <option value="🐊">🐊</option>
+            <option value="🐰">🐰</option>
+          </select>
+          <small class="hint">Choisissez un petit personnage rigolo à afficher à côté du titre.</small>
+        </div>
+
+        <div class="field" style="margin-top:14px;">
+          <label style="display:flex;align-items:center;gap:8px;">
+            <input id="celebrateImageCheckbox" type="checkbox" />
+            <span>Afficher une image de footballeur ("chuut") à la bonne réponse</span>
+          </label>
+          <div class="form-row" style="margin-top:8px;">
+            <label class="secondary" for="celebrateImageInput" style="cursor:pointer;">
+              Importer une image
+            </label>
+            <input id="celebrateImageInput" type="file" accept="image/*" hidden />
+            <img id="celebrateImagePreview" alt="Aperçu" style="max-height:54px;border-radius:8px;border:1px solid var(--border);display:none;" />
+          </div>
+          <small class="hint">Formats acceptés: PNG, JPG. L’image sera affichée brièvement au centre de l’écran lors d’une bonne réponse.</small>
+        </div>
+      </div>
+    </section>
+
+    <section id="users" class="tab">
+      <div class="form-row" style="align-items:center;justify-content:flex-start;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <label style="margin:0;color:var(--muted);font-size:13px;">Utilisateur actif:</label>
+          <span id="currentUserNameTop" class="badge user-badge">—</span>
+          <button id="gotoUsersBtn" class="tab-button icon" aria-label="Utilisateur" title="Utilisateur" style="margin-left:6px;">👤</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <h2>Gestion des utilisateurs</h2>
+        </div>
+        <div class="field">
+          <small class="hint">L’utilisateur actif se règle dans l’en-tête. Ici vous pouvez ajouter et supprimer des utilisateurs.</small>
+        </div>
+        <div class="form-row" style="margin-top:12px;gap:8px;">
+          <button id="newUserBtn" class="secondary">Nouvel utilisateur</button>
+          <button id="deleteUserBtn" class="danger" title="Supprimer l’utilisateur (si aucun historique)">Supprimer utilisateur</button>
+        </div>
+        <div class="field" style="margin-top:12px;">
+          <label>Utilisateurs existants</label>
+          <ul id="usersList" class="words-list"></ul>
+          <small class="hint">Seul un utilisateur sans historique peut être supprimé.</small>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <small>Les données sont enregistrées sur cet appareil (localStorage).</small>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="apiClient.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
