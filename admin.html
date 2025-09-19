@@ -72,6 +72,42 @@
     </div>
   </div>
 
+  <div class="panel" style="margin-top:16px;">
+    <h3>Utilisateurs (CRUD)</h3>
+    <div class="row" style="gap:12px;">
+      <input id="newUserName" placeholder="Nom utilisateur" />
+      <button id="createUserBtn" class="success">Créer</button>
+      <button id="reloadUsersBtn">Recharger</button>
+    </div>
+    <ul id="adminUsersList" style="margin-top:8px;"></ul>
+  </div>
+
+  <div class="panel" style="margin-top:16px;">
+    <h3>Vocabulaires / Decks (CRUD)</h3>
+    <div class="row" style="gap:12px;">
+      <input id="newDeckName" placeholder="Nom du vocabulaire" />
+      <button id="createDeckBtn" class="success">Créer</button>
+      <button id="reloadDecksBtn">Recharger</button>
+    </div>
+    <ul id="adminDecksList" style="margin-top:8px;"></ul>
+  </div>
+
+  <div class="panel" style="margin-top:16px;">
+    <h3>Mots</h3>
+    <div class="row" style="gap:12px;">
+      <label class="muted">Deck:</label>
+      <select id="wordsDeckSelect"></select>
+      <button id="reloadWordsBtn">Recharger</button>
+      <button id="clearDeckWordsBtn" class="danger">Vider ce deck</button>
+    </div>
+    <div class="row" style="gap:12px; margin-top:8px;">
+      <input id="newWordFr" placeholder="Français (ex: pomme)" />
+      <input id="newWordEn" placeholder="Traductions séparées par des virgules (ex: apple, apples)" />
+      <button id="createWordBtn" class="success">Ajouter</button>
+    </div>
+    <ul id="adminWordsList" style="margin-top:8px;"></ul>
+  </div>
+
   <div class="footer">
     Endpoints: GET /api/kv, GET/PUT/DELETE /api/kv/:key — Health: /api/health
   </div>
@@ -239,6 +275,148 @@
     document.getElementById('savePrefsBtn').addEventListener('click', savePrefsForSelected);
 
     refreshUsersList();
+
+    // ---- Users CRUD ----
+    async function adminReloadUsers() {
+      const data = await api('/api/users');
+      const ul = document.getElementById('adminUsersList');
+      ul.innerHTML = '';
+      (data.items || []).forEach(u => {
+        const li = document.createElement('li');
+        const left = document.createElement('div');
+        left.innerHTML = `<div class="key">${u.name}</div><div class="muted">id: ${u.id}</div>`;
+        const right = document.createElement('div');
+        const del = document.createElement('button');
+        del.className = 'danger';
+        del.textContent = 'Supprimer';
+        del.addEventListener('click', async () => {
+          if (!confirm(`Supprimer l'utilisateur "${u.name}" ?`)) return;
+          const res = await fetch(`/api/users/${encodeURIComponent(u.id)}`, { method: 'DELETE' });
+          if (!res.ok) return alert(await res.text());
+          adminReloadUsers();
+          refreshUsersList();
+        });
+        right.appendChild(del);
+        li.appendChild(left);
+        li.appendChild(right);
+        ul.appendChild(li);
+      });
+    }
+    document.getElementById('reloadUsersBtn').addEventListener('click', adminReloadUsers);
+    document.getElementById('createUserBtn').addEventListener('click', async () => {
+      const name = (document.getElementById('newUserName').value || '').trim();
+      if (!name) return alert('Nom requis');
+      const res = await fetch('/api/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
+      });
+      if (res.status === 409) return alert('Nom déjà existant');
+      if (!res.ok) return alert(await res.text());
+      document.getElementById('newUserName').value = '';
+      adminReloadUsers();
+      refreshUsersList();
+    });
+    adminReloadUsers();
+
+    // ---- Decks CRUD ----
+    async function adminReloadDecks() {
+      const data = await api('/api/decks');
+      const ul = document.getElementById('adminDecksList');
+      ul.innerHTML = '';
+      const select = document.getElementById('wordsDeckSelect');
+      select.innerHTML = '';
+      (data.items || []).forEach(d => {
+        const li = document.createElement('li');
+        const left = document.createElement('div');
+        left.innerHTML = `<div class="key">${d.name}</div><div class="muted">id: ${d.id}</div>`;
+        const right = document.createElement('div');
+        const del = document.createElement('button');
+        del.className = 'danger';
+        del.textContent = 'Supprimer';
+        del.addEventListener('click', async () => {
+          if (!confirm(`Supprimer le vocabulaire "${d.name}" ?`)) return;
+          const res = await fetch(`/api/decks/${encodeURIComponent(d.id)}`, { method: 'DELETE' });
+          if (!res.ok) return alert(await res.text());
+          adminReloadDecks();
+        });
+        right.appendChild(del);
+        li.appendChild(left);
+        li.appendChild(right);
+        ul.appendChild(li);
+        const opt = document.createElement('option');
+        opt.value = d.id; opt.textContent = d.name; select.appendChild(opt);
+      });
+      // Après rechargement des decks, recharger les mots du deck courant si sélectionné
+      if (select.value) adminReloadWords();
+    }
+    document.getElementById('reloadDecksBtn').addEventListener('click', adminReloadDecks);
+    document.getElementById('createDeckBtn').addEventListener('click', async () => {
+      const name = (document.getElementById('newDeckName').value || '').trim();
+      if (!name) return alert('Nom requis');
+      const res = await fetch('/api/decks', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
+      });
+      if (res.status === 409) return alert('Nom déjà existant');
+      if (!res.ok) return alert(await res.text());
+      document.getElementById('newDeckName').value = '';
+      adminReloadDecks();
+    });
+    adminReloadDecks();
+
+    // ---- Words CRUD ----
+    async function adminReloadWords() {
+      const deckId = document.getElementById('wordsDeckSelect').value;
+      const ul = document.getElementById('adminWordsList');
+      ul.innerHTML = '';
+      if (!deckId) return;
+      const res = await fetch(`/api/decks/${encodeURIComponent(deckId)}/words`);
+      if (!res.ok) { ul.innerHTML = '<li class="muted">Erreur de chargement</li>'; return; }
+      const data = await res.json();
+      (data.items || []).forEach(w => {
+        const li = document.createElement('li');
+        const left = document.createElement('div');
+        const en = Array.isArray(w.en) ? w.en.join(', ') : '';
+        left.innerHTML = `<div class="key">${w.fr} → ${en}</div><div class="muted">id: ${w.id}</div>`;
+        const right = document.createElement('div');
+        const del = document.createElement('button');
+        del.className = 'danger';
+        del.textContent = 'Supprimer';
+        del.addEventListener('click', async () => {
+          if (!confirm(`Supprimer le mot "${w.fr}" ?`)) return;
+          const r = await fetch(`/api/words/${encodeURIComponent(w.id)}`, { method: 'DELETE' });
+          if (!r.ok) return alert(await r.text());
+          adminReloadWords();
+        });
+        right.appendChild(del);
+        li.appendChild(left);
+        li.appendChild(right);
+        ul.appendChild(li);
+      });
+    }
+    document.getElementById('wordsDeckSelect').addEventListener('change', adminReloadWords);
+    document.getElementById('reloadWordsBtn').addEventListener('click', adminReloadWords);
+    document.getElementById('createWordBtn').addEventListener('click', async () => {
+      const deckId = document.getElementById('wordsDeckSelect').value;
+      if (!deckId) return alert('Choisir un deck');
+      const fr = (document.getElementById('newWordFr').value || '').trim();
+      const enRaw = (document.getElementById('newWordEn').value || '').trim();
+      if (!fr) return alert('Français requis');
+      const en = enRaw ? enRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const res = await fetch(`/api/decks/${encodeURIComponent(deckId)}/words`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fr, en })
+      });
+      if (!res.ok) return alert(await res.text());
+      document.getElementById('newWordFr').value = '';
+      document.getElementById('newWordEn').value = '';
+      adminReloadWords();
+    });
+    document.getElementById('clearDeckWordsBtn').addEventListener('click', async () => {
+      const deckId = document.getElementById('wordsDeckSelect').value;
+      if (!deckId) return alert('Choisir un deck');
+      if (!confirm('Vider tous les mots de ce deck ?')) return;
+      const res = await fetch(`/api/decks/${encodeURIComponent(deckId)}/words`, { method: 'DELETE' });
+      if (!res.ok) return alert(await res.text());
+      adminReloadWords();
+    });
   </script>
 </body>
 </html>
