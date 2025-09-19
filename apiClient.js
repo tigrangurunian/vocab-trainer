@@ -106,5 +106,32 @@ window.api = {
       throw new Error(err.error || 'delete_failed');
     }
     return res.json();
+  },
+  // Reviews (history)
+  async getReviews(deckId) {
+    const res = await fetch(`/api/decks/${encodeURIComponent(deckId)}/reviews`);
+    if (!res.ok) throw new Error('Failed to load reviews');
+    const data = await res.json();
+    return data.items || [];
+  },
+  async createReview(record) {
+    const res = await fetch('/api/reviews', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(record)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err.error || 'review_create_failed');
+    }
+    return res.json();
+  },
+  async clearDeckReviews(deckId) {
+    const res = await fetch(`/api/decks/${encodeURIComponent(deckId)}/reviews`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err.error || 'reviews_clear_failed');
+    }
+    return res.json();
   }
 };

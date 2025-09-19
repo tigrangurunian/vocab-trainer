@@ -76,6 +76,21 @@
   let session = null;
   let history = loadHistory();
 
+  // ---- Server history (reviews) sync ----
+  async function fetchHistoryFromServer() {
+    if (!window.api || !window.api.getReviews || !prefs.selectedDeckId) return;
+    try {
+      const items = await window.api.getReviews(prefs.selectedDeckId);
+      // Items already shaped similarly: { startedAt, endedAt, durationMs, totalQuestions, uniqueWords, perWord, summary, userId, deckId }
+      history = Array.isArray(items) ? items.slice() : [];
+      saveHistory();
+      renderHistory();
+      renderStatsChart();
+    } catch (err) {
+      console.warn('fetchHistoryFromServer failed:', err);
+    }
+  }
+
   function loadWords() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -728,8 +743,11 @@
       renderUsersList();
       updateUserTabState();
     } else if (tabName === 'stats') {
-      renderHistory();
-      renderStatsChart();
+      // Ensure server history is up to date before rendering
+      fetchHistoryFromServer().then(() => {
+        renderHistory();
+        renderStatsChart();
+      });
     }
   }
 
@@ -1046,6 +1064,13 @@
         renderWords();
         // enregistrer l'historique de session
         finalizeAndStoreSessionHistory();
+        // Also post to server history if available
+        try {
+          if (window.api && typeof window.api.createReview === 'function') {
+            const last = history[history.length - 1];
+            if (last) window.api.createReview(last).catch((e)=>console.warn('createReview failed:', e));
+          }
+        } catch (e) { console.warn('createReview failed:', e); }
         renderHistory();
         renderStatsChart();
         renderUsersList();
@@ -1302,6 +1327,7 @@
     prefs.selectedDeckId = deckSelect.value;
     savePrefs();
     await fetchWordsForSelectedDeck();
+    await fetchHistoryFromServer();
     renderHistory();
     renderStatsChart();
     renderUsersList();
@@ -1501,15 +1527,23 @@
     if (prefs && prefs.selectedUserId) syncPrefsFromServer(prefs.selectedUserId);
   });
 
-  // Initial server sync for decks and words
-  fetchDecksFromServer().then(() => fetchWordsForSelectedDeck());
+  // Initial server sync for decks, words, and history
+  fetchDecksFromServer().then(() => fetchWordsForSelectedDeck()).then(() => fetchHistoryFromServer());
 
   // Clear history button
   if (clearHistoryBtn) {
-    clearHistoryBtn.addEventListener('click', () => {
+    clearHistoryBtn.addEventListener('click', async () => {
       const count = getCurrentDeckHistory().length;
       if (!count) return;
       if (confirm('Effacer l\'historique de ce vocabulaire ?')) {
+        try {
+          if (window.api && typeof window.api.clearDeckReviews === 'function') {
+            await window.api.clearDeckReviews(prefs.selectedDeckId);
+          }
+        } catch (e) {
+          console.warn('clearDeckReviews failed:', e);
+        }
+        // Clear local cache as well
         history = history.filter(h => h.deckId !== prefs.selectedDeckId);
         saveHistory();
         renderHistory();

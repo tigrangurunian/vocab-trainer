@@ -47,6 +47,23 @@ CREATE TABLE IF NOT EXISTS words (
   created_at INTEGER NOT NULL,
   FOREIGN KEY(deck_id) REFERENCES decks(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS reviews (
+  id TEXT PRIMARY KEY,
+  deck_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  total_questions INTEGER NOT NULL,
+  unique_words INTEGER NOT NULL,
+  errors_total INTEGER NOT NULL,
+  avg_ms_overall INTEGER NOT NULL,
+  first_pass_pct INTEGER NOT NULL,
+  per_word TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(deck_id) REFERENCES decks(id) ON DELETE CASCADE,
+  FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
 `);
 
 const getKvStmt = db.prepare('SELECT value FROM kv WHERE key = ?');
@@ -79,6 +96,10 @@ const listWordsByDeckStmt = db.prepare('SELECT id, fr, en, errors, errors_by_use
 const insertWordStmt = db.prepare('INSERT INTO words (id, deck_id, fr, en, errors, errors_by_user, created_at) VALUES (@id, @deck_id, @fr, @en, @errors, @errors_by_user, @created_at)');
 const deleteWordStmt = db.prepare('DELETE FROM words WHERE id = ?');
 const clearWordsByDeckStmt = db.prepare('DELETE FROM words WHERE deck_id = ?');
+// Reviews prepared statements
+const listReviewsByDeckStmt = db.prepare('SELECT id, deck_id, user_id, started_at, ended_at, duration_ms, total_questions, unique_words, errors_total, avg_ms_overall, first_pass_pct, per_word, created_at FROM reviews WHERE deck_id = ? ORDER BY started_at ASC');
+const insertReviewStmt = db.prepare(`INSERT INTO reviews (id, deck_id, user_id, started_at, ended_at, duration_ms, total_questions, unique_words, errors_total, avg_ms_overall, first_pass_pct, per_word, created_at) VALUES (@id, @deck_id, @user_id, @started_at, @ended_at, @duration_ms, @total_questions, @unique_words, @errors_total, @avg_ms_overall, @first_pass_pct, @per_word, @created_at)`);
+const clearReviewsByDeckStmt = db.prepare('DELETE FROM reviews WHERE deck_id = ?');
 
 // App
 const app = express();
@@ -89,6 +110,69 @@ app.get('/api/health', (req, res) => {
   try {
     db.prepare('SELECT 1').get();
     res.json({ ok: true });
+// Reviews API
+// GET /api/decks/:deckId/reviews -> { items: [...] }
+app.get('/api/decks/:deckId/reviews', (req, res) => {
+  try {
+    const deckId = String(req.params.deckId);
+    const rows = listReviewsByDeckStmt.all(deckId).map(r => ({
+      id: r.id,
+      deckId: r.deck_id,
+      userId: r.user_id,
+      startedAt: r.started_at * 1000,
+      endedAt: r.ended_at * 1000,
+      durationMs: r.duration_ms,
+      totalQuestions: r.total_questions,
+      uniqueWords: r.unique_words,
+      perWord: JSON.parse(r.per_word || '{}'),
+      summary: {
+        errorsTotal: r.errors_total,
+        avgMsOverall: r.avg_ms_overall,
+        firstPassPct: r.first_pass_pct
+      },
+      createdAt: r.created_at * 1000
+    }));
+    res.json({ items: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/reviews body: review record
+app.post('/api/reviews', (req, res) => {
+  try {
+    const b = req.body || {};
+    const id = String(b.id || ('r_' + Math.random().toString(36).slice(2) + Date.now().toString(36)));
+    const deck_id = String(b.deckId);
+    const user_id = String(b.userId);
+    const started_at = Math.floor((b.startedAt || Date.now()) / 1000);
+    const ended_at = Math.floor((b.endedAt || Date.now()) / 1000);
+    const duration_ms = Number(b.durationMs || 0);
+    const total_questions = Number(b.totalQuestions || 0);
+    const unique_words = Number(b.uniqueWords || 0);
+    const errors_total = Number(b.summary?.errorsTotal || 0);
+    const avg_ms_overall = Number(b.summary?.avgMsOverall || 0);
+    const first_pass_pct = Number(b.summary?.firstPassPct || 0);
+    const per_word = JSON.stringify(b.perWord || {});
+    const created_at = Math.floor(Date.now()/1000);
+    if (!deck_id || !user_id) return res.status(400).json({ error: 'deckId_userId_required' });
+    insertReviewStmt.run({ id, deck_id, user_id, started_at, ended_at, duration_ms, total_questions, unique_words, errors_total, avg_ms_overall, first_pass_pct, per_word, created_at });
+    res.status(201).json({ id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// DELETE /api/decks/:deckId/reviews -> clear all reviews for deck
+app.delete('/api/decks/:deckId/reviews', (req, res) => {
+  try {
+    const deckId = String(req.params.deckId);
+    const info = clearReviewsByDeckStmt.run(deckId);
+    res.json({ ok: true, deleted: info.changes });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

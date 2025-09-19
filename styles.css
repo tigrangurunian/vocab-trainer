@@ -86,11 +86,15 @@ body {
 .app-header h1 {
   margin: 0;
   font-size: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center; /* center emoji + title horizontally */
 }
 .app-header .mascot {
-  font-size: 36px;
-  margin-left: 8px;
   display: inline-block;
+  font-size: 36px;
+  margin-right: 8px; /* emoji now on the left of title text */
   transform: translateY(2px);
 }
 .app-header p {

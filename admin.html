@@ -31,31 +31,7 @@
 </head>
 <body>
   <h1>Admin DB — <span class="hl">Vocab Trainer</span></h1>
-  <div class="bar">
-    <button id="refreshBtn">Rafraîchir</button>
-    <div id="status" class="muted">Prêt</div>
-  </div>
-
-  <div class="layout">
-    <div class="panel">
-      <h3>Clés</h3>
-      <ul id="keysList"></ul>
-    </div>
-    <div class="panel">
-      <h3>Détail</h3>
-      <div class="row" style="gap:12px;">
-        <input id="keyInput" placeholder="clé" />
-        <button id="loadBtn">Charger</button>
-      </div>
-      <div style="margin-top:8px;">
-        <textarea id="valueInput" rows="16" class="mono" placeholder="value JSON"></textarea>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <button id="saveBtn" class="success">Enregistrer</button>
-        <button id="deleteBtn" class="danger">Supprimer</button>
-      </div>
-    </div>
-  </div>
+  
 
   <div class="panel" style="margin-top:16px;">
     <h3>Préférences Utilisateur</h3>
@@ -108,16 +84,25 @@
     <ul id="adminWordsList" style="margin-top:8px;"></ul>
   </div>
 
+  <div class="panel" style="margin-top:16px;">
+    <h3>Historique (Reviews)</h3>
+    <div class="row" style="gap:12px;">
+      <label class="muted">Deck:</label>
+      <select id="reviewsDeckSelect"></select>
+      <label class="muted">Utilisateur:</label>
+      <select id="reviewsUserFilter"><option value="">— Tous —</option></select>
+      <button id="reloadReviewsBtn">Recharger</button>
+      <button id="clearDeckReviewsBtn" class="danger">Effacer historique du deck</button>
+    </div>
+    <ul id="adminReviewsList" style="margin-top:8px;"></ul>
+  </div>
+
   <div class="footer">
-    Endpoints: GET /api/kv, GET/PUT/DELETE /api/kv/:key — Health: /api/health
+    Admin: Utilisateurs, Decks, Mots et Préférences — Health: /api/health
   </div>
 
   <script>
     const $ = sel => document.querySelector(sel);
-    const keysList = $('#keysList');
-    const keyInput = $('#keyInput');
-    const valueInput = $('#valueInput');
-    const status = $('#status');
     const usersSelect = $('#usersSelect');
     const prefsTextarea = $('#prefsTextarea');
 
@@ -127,92 +112,7 @@
       return res.headers.get('content-type')?.includes('application/json') ? res.json() : res.text();
     }
 
-    async function refreshKeys() {
-      setStatus('Chargement...');
-      try {
-        const data = await api('/api/kv');
-        keysList.innerHTML = '';
-        (data.items || []).forEach(item => {
-          const li = document.createElement('li');
-          const left = document.createElement('div');
-          left.innerHTML = `<div class="key">${item.key}</div><div class="muted">maj: ${new Date(item.updated_at * 1000).toLocaleString()}</div>`;
-          const right = document.createElement('div');
-          const btn = document.createElement('button');
-          btn.textContent = 'Ouvrir';
-          btn.addEventListener('click', () => loadKey(item.key));
-          right.appendChild(btn);
-          li.appendChild(left);
-          li.appendChild(right);
-          keysList.appendChild(li);
-        });
-        setStatus('OK');
-      } catch (e) {
-        console.error(e);
-        setStatus('Erreur: ' + e.message);
-      }
-    }
-
-    function setStatus(text) { status.textContent = text; }
-
-    async function loadKey(key) {
-      try {
-        setStatus('Chargement clé...');
-        keyInput.value = key;
-        const data = await api('/api/kv/' + encodeURIComponent(key));
-        valueInput.value = JSON.stringify(data.value, null, 2);
-        setStatus('OK');
-      } catch (e) {
-        valueInput.value = '';
-        setStatus('Erreur: ' + e.message);
-      }
-    }
-
-    async function saveCurrent() {
-      const key = keyInput.value.trim();
-      if (!key) return alert('Clé manquante');
-      let valueRaw = valueInput.value.trim();
-      let parsed;
-      try { parsed = valueRaw ? JSON.parse(valueRaw) : null; }
-      catch(e) { return alert('JSON invalide: ' + e.message); }
-      setStatus('Enregistrement...');
-      try {
-        await api('/api/kv/' + encodeURIComponent(key), {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value: parsed })
-        });
-        setStatus('Enregistré');
-        refreshKeys();
-      } catch (e) {
-        setStatus('Erreur: ' + e.message);
-      }
-    }
-
-    async function deleteCurrent() {
-      const key = keyInput.value.trim();
-      if (!key) return alert('Clé manquante');
-      if (!confirm(`Supprimer la clé "${key}" ?`)) return;
-      setStatus('Suppression...');
-      try {
-        await api('/api/kv/' + encodeURIComponent(key), { method: 'DELETE' });
-        keyInput.value = '';
-        valueInput.value = '';
-        setStatus('Supprimé');
-        refreshKeys();
-      } catch (e) {
-        setStatus('Erreur: ' + e.message);
-      }
-    }
-
-    document.getElementById('refreshBtn').addEventListener('click', refreshKeys);
-    document.getElementById('loadBtn').addEventListener('click', () => {
-      const k = keyInput.value.trim();
-      if (k) loadKey(k);
-    });
-    document.getElementById('saveBtn').addEventListener('click', saveCurrent);
-    document.getElementById('deleteBtn').addEventListener('click', deleteCurrent);
-
-    refreshKeys();
+    
 
     // ---- Users prefs admin ----
     async function refreshUsersList() {
@@ -417,6 +317,64 @@
       if (!res.ok) return alert(await res.text());
       adminReloadWords();
     });
+
+    // ---- Reviews admin ----
+    async function seedReviewsSelectors() {
+      // decks
+      const decks = await api('/api/decks');
+      const dsel = document.getElementById('reviewsDeckSelect');
+      dsel.innerHTML = '';
+      (decks.items || []).forEach(d => {
+        const o = document.createElement('option');
+        o.value = d.id; o.textContent = d.name; dsel.appendChild(o);
+      });
+      // users
+      const users = await api('/api/users');
+      const usel = document.getElementById('reviewsUserFilter');
+      // keep "Tous"
+      Array.from(usel.querySelectorAll('option:not([value=""])')).forEach(n => n.remove());
+      (users.items || []).forEach(u => {
+        const o = document.createElement('option');
+        o.value = u.id; o.textContent = u.name; usel.appendChild(o);
+      });
+    }
+
+    async function adminReloadReviews() {
+      const deckId = document.getElementById('reviewsDeckSelect').value;
+      const userId = document.getElementById('reviewsUserFilter').value;
+      const ul = document.getElementById('adminReviewsList');
+      ul.innerHTML = '';
+      if (!deckId) return;
+      const res = await fetch(`/api/decks/${encodeURIComponent(deckId)}/reviews`);
+      if (!res.ok) { ul.innerHTML = '<li class="muted">Erreur de chargement</li>'; return; }
+      let data = (await res.json()).items || [];
+      if (userId) data = data.filter(r => r.userId === userId);
+      if (!data.length) { ul.innerHTML = '<li class="muted">Aucun historique</li>'; return; }
+      data.forEach(r => {
+        const li = document.createElement('li');
+        const dt = new Date(r.startedAt).toLocaleString();
+        const fp = r.summary?.firstPassPct ?? 0;
+        const err = r.summary?.errorsTotal ?? 0;
+        const mins = Math.max(1, Math.round((r.durationMs || 0) / 60000));
+        li.innerHTML = `<div class="key">${dt}</div><div class="muted">Q: ${r.totalQuestions} • 1er coup: ${fp}% • Err: ${err} • Durée: ${mins} min</div>`;
+        ul.appendChild(li);
+      });
+    }
+
+    document.getElementById('reloadReviewsBtn').addEventListener('click', adminReloadReviews);
+    document.getElementById('reviewsDeckSelect').addEventListener('change', adminReloadReviews);
+    document.getElementById('reviewsUserFilter').addEventListener('change', adminReloadReviews);
+    document.getElementById('clearDeckReviewsBtn').addEventListener('click', async () => {
+      const deckId = document.getElementById('reviewsDeckSelect').value;
+      if (!deckId) return alert('Choisir un deck');
+      if (!confirm('Effacer tout l\'historique de ce deck ?')) return;
+      const r = await fetch(`/api/decks/${encodeURIComponent(deckId)}/reviews`, { method: 'DELETE' });
+      if (!r.ok) return alert(await r.text());
+      adminReloadReviews();
+    });
+
+    // init reviews selectors and list
+    seedReviewsSelectors().then(adminReloadReviews);
   </script>
 </body>
 </html>
