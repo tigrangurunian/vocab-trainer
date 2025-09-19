@@ -31,10 +31,12 @@
   <main class="container">
     <nav class="tabs">
       <button class="tab-button active" data-tab="review">Révision</button>
+      <button class="tab-button" data-tab="stats">Statistiques</button>
     </nav>
 
     <section id="manage" class="tab">
       <div class="card">
+        <button class="tab-button icon card-close" data-tab="review" aria-label="Fermer" title="Fermer">❌</button>
         <div class="card-header">
           <h2>Ajouter un mot</h2>
           <div class="actions">
@@ -109,6 +111,9 @@
         </div>
       </div>
 
+    </section>
+
+    <section id="stats" class="tab">
       <div class="card">
         <div class="card-header">
           <h2>Historique des révisions</h2>
@@ -135,10 +140,10 @@
 
       <div class="card">
         <div class="card-header">
-          <h2>Statistiques</h2>
+          <h2>Progression</h2>
         </div>
         <div>
-          <canvas id="statsChart" height="140"></canvas>
+          <canvas id="statsChart" height="112"></canvas>
         </div>
       </div>
 
@@ -211,6 +216,7 @@
         </div>
       </div>
       <div class="card">
+        <button class="tab-button icon card-close" data-tab="review" aria-label="Fermer" title="Fermer">❌</button>
         <div class="card-header">
           <h2>Gestion des utilisateurs</h2>
         </div>
@@ -231,7 +237,9 @@
   </main>
 
   <footer class="app-footer">
-    <small>Les données sont enregistrées sur cet appareil (localStorage).</small>
+    <div><small>Version Beta</small></div>
+    <div><small>Contact: <a href="mailto:tigran.gurunian@gmail.com">tigran.gurunian@gmail.com</a></small></div>
+    <div><small><span class="emoji-large" aria-hidden="true">©</span> Cool stuff</small></div>
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>

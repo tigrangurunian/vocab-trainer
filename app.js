@@ -9,10 +9,11 @@
   const HISTORY_KEY = 'vocab_trainer_history_v1';
 
   // Elements
-  const tabs = document.querySelectorAll('nav.tabs .tab-button');
+  const tabs = document.querySelectorAll('.tab-button[data-tab]');
   const manageTab = document.getElementById('manage');
   const reviewTab = document.getElementById('review');
   const prefsTab = document.getElementById('prefs');
+  const statsTab = document.getElementById('stats');
   const usersTab = document.getElementById('users');
 
   const addForm = document.getElementById('addWordForm');
@@ -711,6 +712,7 @@
     reviewTab.classList.toggle('active', tabName === 'review');
     if (prefsTab) prefsTab.classList.toggle('active', tabName === 'prefs');
     if (usersTab) usersTab.classList.toggle('active', tabName === 'users');
+    if (statsTab) statsTab.classList.toggle('active', tabName === 'stats');
 
     // Update nav tab button active state (only those inside nav.tabs)
     document.querySelectorAll('nav.tabs .tab-button').forEach(b => {
@@ -725,11 +727,14 @@
       applyUserBadge();
       renderUsersList();
       updateUserTabState();
+    } else if (tabName === 'stats') {
+      renderHistory();
+      renderStatsChart();
     }
   }
 
-  // Wire nav tab buttons
-  tabs.forEach(btn => {
+  // Wire any button with data-tab to switch tabs (nav buttons, close buttons, shortcuts)
+  document.querySelectorAll('[data-tab]').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
@@ -1042,6 +1047,7 @@
         // enregistrer l'historique de session
         finalizeAndStoreSessionHistory();
         renderHistory();
+        renderStatsChart();
         renderUsersList();
         session = null;
         return;
@@ -1229,7 +1235,10 @@
       .filter(h => h.userId === prefs.selectedUserId)
       .slice()
       .sort((a, b) => a.startedAt - b.startedAt); // oldest -> newest
-    const labels = items.map(it => new Date(it.startedAt).toLocaleDateString());
+    const labels = items.map(it => new Date(it.startedAt).toLocaleString(undefined, {
+      year: '2-digit', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit'
+    }));
     const data = items.map(it => {
       const questions = it.totalQuestions || 0;
       const errors = (it.summary && it.summary.errorsTotal) || 0;
