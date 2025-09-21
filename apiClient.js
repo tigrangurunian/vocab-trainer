@@ -25,6 +25,18 @@ window.api = {
     }
     return res.json();
   },
+  async copyDeck(sourceDeckId, name) {
+    const res = await fetch(`/api/decks/${encodeURIComponent(sourceDeckId)}/copy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err.error || 'deck_copy_failed');
+    }
+    return res.json();
+  },
   async deleteDeck(id) {
     const res = await fetch(`/api/decks/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!res.ok) {
@@ -65,6 +77,18 @@ window.api = {
     if (!res.ok) {
       const err = await res.json().catch(()=>({}));
       throw new Error(err.error || 'deck_clear_failed');
+    }
+    return res.json();
+  },
+  async updateWord(id, { fr, en }) {
+    const res = await fetch(`/api/words/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fr, en })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err.error || 'word_update_failed');
     }
     return res.json();
   },

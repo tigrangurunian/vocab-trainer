@@ -28,6 +28,7 @@
 
   const deckSelect = document.getElementById('deckSelect');
   const newDeckBtn = document.getElementById('newDeckBtn');
+  const copyDeckBtn = document.getElementById('copyDeckBtn');
   const userSelect = document.getElementById('userSelect');
   const newUserBtn = document.getElementById('newUserBtn');
   const userBadge = document.getElementById('userBadge');
@@ -42,6 +43,7 @@
   const promptEl = document.getElementById('prompt');
   const answerForm = document.getElementById('answerForm');
   const answerInput = document.getElementById('answerInput');
+  const answerSubmitBtn = answerForm ? answerForm.querySelector('button[type="submit"]') : null;
   const feedback = document.getElementById('feedback');
   const scoreEl = document.getElementById('score');
   const questionIndexEl = document.getElementById('questionIndex');
@@ -53,6 +55,8 @@
   const fireworksCheckbox = document.getElementById('fireworksCheckbox');
   const themeSelect = document.getElementById('themeSelect');
   const mascotSelect = document.getElementById('mascotSelect');
+  const ttsLangSelect = document.getElementById('ttsLangSelect');
+  const ttsProviderSelect = document.getElementById('ttsProviderSelect');
   const mascotEl = document.querySelector('.app-header .mascot');
   const historyTable = document.getElementById('historyTable');
   const historyTbody = document.getElementById('historyTbody');
@@ -89,6 +93,22 @@
     } catch (err) {
       console.warn('fetchHistoryFromServer failed:', err);
     }
+
+  // TTS preferences wiring
+  if (ttsLangSelect) {
+    ttsLangSelect.value = (prefs && prefs.ttsLang) || 'en';
+    ttsLangSelect.addEventListener('change', () => {
+      prefs.ttsLang = ttsLangSelect.value;
+      savePrefs();
+    });
+  }
+  if (ttsProviderSelect) {
+    ttsProviderSelect.value = (prefs && prefs.ttsProvider) || 'web';
+    ttsProviderSelect.addEventListener('change', () => {
+      prefs.ttsProvider = ttsProviderSelect.value;
+      savePrefs();
+    });
+  }
   }
 
   function loadWords() {
@@ -245,15 +265,63 @@
     }
   }
 
-  function speakText(text) {
+  function pickGermanVoice() {
+    try {
+      const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+      if (!voices || !voices.length) return null;
+      return (
+        voices.find(v => /de-DE/i.test(v.lang)) ||
+        voices.find(v => /^de/i.test(v.lang)) ||
+        null
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  async function speakTextServer(text) {
+    try {
+      const lang = (prefs && prefs.ttsLang) || 'en';
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, lang })
+      });
+      if (!res.ok) throw new Error('tts_server_failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      await audio.play().catch(()=>{});
+      setTimeout(() => URL.revokeObjectURL(url), 20000);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function speakText(text) {
     if (!('speechSynthesis' in window)) return;
     if (!text) return;
     try {
+      // Try server provider if selected
+      const provider = (prefs && prefs.ttsProvider) || 'web';
+      if (provider === 'server') {
+        const ok = await speakTextServer(text);
+        if (ok) return;
+        // fallback to web if server failed
+      }
       window.speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(text);
-      const voice = pickEnglishVoice();
+      const lang = (prefs && prefs.ttsLang) || 'en';
+      let voice = null;
+      if (lang === 'de') {
+        voice = pickGermanVoice();
+        utter.lang = (voice && voice.lang) || 'de-DE';
+      } else {
+        voice = pickEnglishVoice();
+        utter.lang = (voice && voice.lang) || 'en-US';
+      }
       if (voice) utter.voice = voice;
-      utter.lang = (voice && voice.lang) || 'en-US';
       utter.rate = 0.95;
       utter.pitch = 1.0;
       window.speechSynthesis.speak(utter);
@@ -346,9 +414,9 @@
   function loadPrefs() {
     try {
       const raw = localStorage.getItem(PREFS_KEY);
-      return raw ? JSON.parse(raw) : { shuffle: true, fireworks: true, theme: 'dark', mascot: '🦊', celebrateImageEnabled: false, celebrateImageData: null };
+      return raw ? JSON.parse(raw) : { shuffle: true, fireworks: true, theme: 'dark', mascot: '🦊', ttsLang: 'en', ttsProvider: 'web', celebrateImageEnabled: false, celebrateImageData: null };
     } catch (e) {
-      return { shuffle: true, fireworks: true, theme: 'dark', mascot: '🦊', celebrateImageEnabled: false, celebrateImageData: null };
+      return { shuffle: true, fireworks: true, theme: 'dark', mascot: '🦊', ttsLang: 'en', ttsProvider: 'web', celebrateImageEnabled: false, celebrateImageData: null };
     }
   }
 
@@ -660,23 +728,34 @@
     }
     wordsEmpty.style.display = 'none';
 
-    // Sort by number of errors (desc), then French word (asc)
+    // Sort by insertion order (createdAt ascending) by default
     const list = [...deckWords].sort((a, b) => {
-      const ea = a.errors || 0;
-      const eb = b.errors || 0;
-      if (eb !== ea) return eb - ea;
-      return String(a.fr).localeCompare(String(b.fr), 'fr', { sensitivity: 'base' });
+      const ac = a.createdAt || 0;
+      const bc = b.createdAt || 0;
+      return ac - bc;
     });
 
     for (const w of list) {
       const li = document.createElement('li');
       const wordSpan = document.createElement('span');
       wordSpan.className = 'word';
-      wordSpan.textContent = w.fr;
+      // Editable French field
+      const frInputEl = document.createElement('input');
+      frInputEl.type = 'text';
+      frInputEl.value = w.fr;
+      frInputEl.placeholder = 'Français';
+      frInputEl.className = 'inline-input';
+      wordSpan.appendChild(frInputEl);
 
       const transSpan = document.createElement('span');
       transSpan.className = 'translations';
-      transSpan.textContent = w.en.join(', ');
+      // Editable English translations field (comma-separated)
+      const enInputEl = document.createElement('input');
+      enInputEl.type = 'text';
+      enInputEl.value = w.en.join(', ');
+      enInputEl.placeholder = 'anglais (séparé par des virgules)';
+      enInputEl.className = 'inline-input';
+      transSpan.appendChild(enInputEl);
 
       const actions = document.createElement('div');
       actions.style.display = 'flex';
@@ -711,6 +790,61 @@
       li.appendChild(actions);
 
       wordsList.appendChild(li);
+
+      // --- Persist edits on blur or Enter/Tab ---
+      let saving = false;
+      // Helper to show a transient green tick
+      function showTick(afterEl) {
+        const tick = document.createElement('span');
+        tick.className = 'save-tick show';
+        tick.textContent = '✓';
+        afterEl.insertAdjacentElement('afterend', tick);
+        setTimeout(() => tick.classList.remove('show'), 900);
+        setTimeout(() => tick.remove(), 1200);
+      }
+
+      async function commitIfChanged() {
+        if (saving) return;
+        const newFr = frInputEl.value.trim();
+        const newEnList = parseTranslations(enInputEl.value || '');
+        if (newFr === w.fr && JSON.stringify(newEnList) === JSON.stringify(w.en)) return;
+        saving = true;
+        try {
+          await window.api.updateWord(w.id, { fr: newFr, en: newEnList });
+          // Update local cache
+          const local = words.find(x => x.id === w.id);
+          if (local) { local.fr = newFr; local.en = newEnList; }
+          saveWords();
+          // Re-render badges/order (errors-based sorting may change if fr changed vis-à-vis locale compare)
+          renderWords();
+          refreshReviewAvailability();
+          // Visual confirmation
+          showTick(enInputEl);
+          frInputEl.classList.remove('error');
+          enInputEl.classList.remove('error');
+          frInputEl.classList.add('success');
+          enInputEl.classList.add('success');
+          setTimeout(() => { frInputEl.classList.remove('success'); enInputEl.classList.remove('success'); }, 1000);
+        } catch (e) {
+          // Visual error feedback
+          frInputEl.classList.add('error');
+          enInputEl.classList.add('error');
+          setTimeout(() => { frInputEl.classList.remove('error'); enInputEl.classList.remove('error'); }, 1000);
+          alert('Erreur mise à jour: ' + (e.message || e));
+        } finally {
+          saving = false;
+        }
+      }
+
+      frInputEl.addEventListener('blur', commitIfChanged);
+      enInputEl.addEventListener('blur', commitIfChanged);
+      function keyHandler(ev) {
+        if (ev.key === 'Enter' || ev.key === 'Tab') {
+          commitIfChanged();
+        }
+      }
+      frInputEl.addEventListener('keydown', keyHandler);
+      enInputEl.addEventListener('keydown', keyHandler);
     }
   }
 
@@ -1030,6 +1164,8 @@
     questionIndexEl.textContent = '1';
     questionTotalEl.textContent = String(pool.length);
     roundNumEl.textContent = '1';
+    // Disable the Start Review button while a session is running
+    if (startReviewBtn) startReviewBtn.disabled = true;
     renderCurrentQuestion();
   }
 
@@ -1074,6 +1210,8 @@
         renderHistory();
         renderStatsChart();
         renderUsersList();
+        // Re-enable the Start Review button at the end of the session
+        if (startReviewBtn) startReviewBtn.disabled = false;
         session = null;
         return;
       }
@@ -1088,20 +1226,32 @@
       renderCurrentQuestion();
       return;
     }
+    // Nettoyer tout écouteur de continuation précédent
+    try {
+      if (session.continueHandler) {
+        window.removeEventListener('keydown', session.continueHandler);
+        session.continueHandler = null;
+      }
+      session.waitingForSpace = false;
+    } catch {}
+
     promptEl.textContent = w.fr;
     questionIndexEl.textContent = String(session.index + 1);
+    answerInput.disabled = false;
     answerInput.value = '';
     answerInput.focus();
+    if (typeof answerSubmitBtn !== 'undefined' && answerSubmitBtn) {
+      answerSubmitBtn.disabled = false;
+    }
     session.currentShownAt = performance.now();
   }
 
   function checkAnswer(userAnswer, w) {
-    const ans = normalize(userAnswer);
+    const ans = String(userAnswer || '').trim();
     if (!ans) return false;
-    const acceptable = w.en.map(e => normalize(e));
-
-    // Exact match or small variants (articles/punct)
-    return acceptable.some(a => a === ans);
+    const acceptable = (w.en || []).map(e => String(e).trim());
+    // Case-sensitive exact match required
+    return acceptable.includes(ans);
   }
 
   answerForm.addEventListener('submit', (e) => {
@@ -1129,6 +1279,13 @@
       showCelebrateImage();
       // Speak only the correct English answer (no French praise)
       speakCorrectAnswer(w);
+      // Advance to next question after a short delay
+      session.index += 1;
+      setTimeout(() => {
+        feedback.innerHTML = '';
+        renderCurrentQuestion();
+      }, 500);
+      return;
     } else {
       feedback.innerHTML = `
         <div class="incorrect-row">
@@ -1136,6 +1293,7 @@
           <span class="incorrect-text">Réponse incorrecte</span>
         </div>
         <div class="expected-big">${w.en.map(escapeHtml).join(', ')}</div>
+        <div class="hint" style="margin-top:8px;color:var(--muted)">Appuyez sur la barre d'espace pour continuer</div>
       `;
       incErrorsForCurrentUser(w);
       saveWords();
@@ -1143,15 +1301,32 @@
       session.errorsNextRound.push(w.id);
       // Speak only the correct English answer (no French praise)
       speakCorrectAnswer(w);
+      // Désactiver la saisie et le bouton pendant l'attente de la barre d'espace
+      answerInput.disabled = true;
+      try { answerInput.blur(); } catch {}
+      if (typeof answerSubmitBtn !== 'undefined' && answerSubmitBtn) {
+        answerSubmitBtn.disabled = true;
+      }
+      // Attendre l'appui sur la barre d'espace pour continuer
+      if (!session.waitingForSpace) {
+        session.waitingForSpace = true;
+        const onSpace = (ev) => {
+          const isSpace = (ev.code === 'Space') || (ev.key === ' ') || (ev.key === 'Spacebar') || (ev.keyCode === 32);
+          if (!isSpace) return;
+          ev.preventDefault();
+          // Nettoyage et passage à la question suivante
+          window.removeEventListener('keydown', onSpace);
+          session.continueHandler = null;
+          session.waitingForSpace = false;
+          session.index += 1;
+          feedback.innerHTML = '';
+          renderCurrentQuestion();
+        };
+        session.continueHandler = onSpace;
+        window.addEventListener('keydown', onSpace);
+      }
+      return;
     }
-
-    // question suivante (attente plus longue si incorrect)
-    const delay = ok ? 500 : 3000;
-    session.index += 1;
-    setTimeout(() => {
-      feedback.innerHTML = '';
-      renderCurrentQuestion();
-    }, delay);
   });
 
   // ------- Session history & stats -------
@@ -1188,9 +1363,8 @@
     }
     const avgMsOverall = totalAttempts ? Math.round(totalSum / totalAttempts) : 0;
     const uniqueCount = Object.keys(perWord).length;
-    // Selon la demande: calculer le pourcentage à partir de "questions" et "erreurs"
-    const questions = session.totalQuestions || uniqueCount;
-    const firstPassPct = questions ? Math.round(((questions - errorsTotal) / questions) * 100) : 0;
+    // Pourcentage 1er coup: nombre de mots sans aucune erreur / nombre de mots uniques
+    const firstPassPct = uniqueCount ? Math.round((firstPassCorrect / uniqueCount) * 100) : 0;
     const record = {
       id: uid(),
       deckId: prefs.selectedDeckId,
@@ -1347,31 +1521,59 @@
       try {
         const created = await window.api.createDeck(clean);
         await fetchDecksFromServer();
-        prefs.selectedDeckId = created.id;
-        savePrefs();
-        renderDecks();
-        await fetchWordsForSelectedDeck();
-        showToast(`Vocabulaire "${clean}" créé`, 'success');
+        // Select the newly created deck
+        if (created && created.id) {
+          prefs.selectedDeckId = created.id;
+          savePrefs();
+          renderDecks();
+          await fetchWordsForSelectedDeck();
+          showToast('Vocabulaire créé', 'success');
+        }
       } catch (e) {
-        // If deck name exists, select it
-        if ((e && e.message) === 'name_exists') {
-          await fetchDecksFromServer();
-          const existing = decks.find(d => (d.name || '').trim().toLowerCase() === clean.toLowerCase());
-          if (existing) {
-            prefs.selectedDeckId = existing.id;
-            savePrefs();
-            renderDecks();
-            await fetchWordsForSelectedDeck();
-            showToast(`Vocabulaire "${clean}" déjà existant sélectionné`, 'success');
-          } else {
-            alert('Ce nom existe déjà.');
-          }
+        if (String(e.message).includes('name_exists')) {
+          alert('Ce nom existe déjà. Choisissez un autre nom.');
         } else {
           alert('Erreur création vocabulaire: ' + (e.message || e));
         }
       } finally {
         newDeckBtn.disabled = false;
         newDeckBtn.textContent = prevText;
+      }
+    });
+  }
+
+  // Copy current deck (vocab) and its words
+  if (copyDeckBtn) {
+    copyDeckBtn.addEventListener('click', async () => {
+      const currentDeck = decks.find(d => d.id === prefs.selectedDeckId);
+      if (!currentDeck) { alert('Aucun vocabulaire sélectionné.'); return; }
+      const defaultName = `Copie de ${currentDeck.name}`;
+      const name = prompt('Nom du vocabulaire copié', defaultName);
+      if (!name) return; // cancelled
+      const clean = name.trim();
+      if (!clean) return;
+      const prevText = copyDeckBtn.textContent;
+      copyDeckBtn.disabled = true;
+      copyDeckBtn.textContent = 'Copie...';
+      try {
+        const result = await window.api.copyDeck(currentDeck.id, clean);
+        await fetchDecksFromServer();
+        if (result && result.id) {
+          prefs.selectedDeckId = result.id;
+          savePrefs();
+          renderDecks();
+          await fetchWordsForSelectedDeck();
+          showToast('Vocabulaire copié', 'success');
+        }
+      } catch (e) {
+        if (String(e.message).includes('name_exists')) {
+          alert('Ce nom existe déjà. Choisissez un autre nom.');
+        } else {
+          alert('Erreur copie vocabulaire: ' + (e.message || e));
+        }
+      } finally {
+        copyDeckBtn.disabled = false;
+        copyDeckBtn.textContent = prevText;
       }
     });
   }

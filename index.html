@@ -41,6 +41,7 @@
           <h2>Ajouter un mot</h2>
           <div class="actions">
             <button id="newDeckBtn" class="secondary" title="Créer un nouveau vocabulaire">Nouveau vocabulaire</button>
+            <button id="copyDeckBtn" class="secondary" title="Copier le vocabulaire courant">Copier vocabulaire</button>
           </div>
         </div>
         <form id="addWordForm" class="form-row" autocomplete="off">
@@ -99,7 +100,6 @@
               <label for="answerInput">Votre réponse</label>
               <input id="answerInput" type="text" placeholder="écrire la traduction en anglais" />
             </div>
-            <button class="primary" type="submit">Valider</button>
           </form>
           <div id="feedback" class="feedback"></div>
         </div>
@@ -188,6 +188,24 @@
             <option value="🐰">🐰</option>
           </select>
           <small class="hint">Choisissez un petit personnage rigolo à afficher à côté du titre.</small>
+        </div>
+
+        <div class="field" style="margin-top:14px;">
+          <label for="ttsLangSelect">Prononciation des réponses</label>
+          <select id="ttsLangSelect" class="deck-select">
+            <option value="en">Anglais</option>
+            <option value="de">Allemand</option>
+          </select>
+          <small class="hint">Choisissez la langue de synthèse vocale pour la lecture des réponses correctes.</small>
+        </div>
+
+        <div class="field" style="margin-top:14px;">
+          <label for="ttsProviderSelect">Fournisseur TTS</label>
+          <select id="ttsProviderSelect" class="deck-select">
+            <option value="web">Navigateur (Web Speech)</option>
+            <option value="server">Serveur (Piper)</option>
+          </select>
+          <small class="hint">Le mode Serveur nécessite Piper configuré côté serveur. Sinon, utilisez le navigateur.</small>
         </div>
 
         <div class="field" style="margin-top:14px;">

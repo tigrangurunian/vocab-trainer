@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
+import { spawn } from 'child_process';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -96,6 +97,7 @@ const listWordsByDeckStmt = db.prepare('SELECT id, fr, en, errors, errors_by_use
 const insertWordStmt = db.prepare('INSERT INTO words (id, deck_id, fr, en, errors, errors_by_user, created_at) VALUES (@id, @deck_id, @fr, @en, @errors, @errors_by_user, @created_at)');
 const deleteWordStmt = db.prepare('DELETE FROM words WHERE id = ?');
 const clearWordsByDeckStmt = db.prepare('DELETE FROM words WHERE deck_id = ?');
+const updateWordStmt = db.prepare('UPDATE words SET fr = @fr, en = @en WHERE id = @id');
 // Reviews prepared statements
 const listReviewsByDeckStmt = db.prepare('SELECT id, deck_id, user_id, started_at, ended_at, duration_ms, total_questions, unique_words, errors_total, avg_ms_overall, first_pass_pct, per_word, created_at FROM reviews WHERE deck_id = ? ORDER BY started_at ASC');
 const insertReviewStmt = db.prepare(`INSERT INTO reviews (id, deck_id, user_id, started_at, ended_at, duration_ms, total_questions, unique_words, errors_total, avg_ms_overall, first_pass_pct, per_word, created_at) VALUES (@id, @deck_id, @user_id, @started_at, @ended_at, @duration_ms, @total_questions, @unique_words, @errors_total, @avg_ms_overall, @first_pass_pct, @per_word, @created_at)`);
@@ -110,6 +112,25 @@ app.get('/api/health', (req, res) => {
   try {
     db.prepare('SELECT 1').get();
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+// PUT /api/words/:id  body: { fr, en: [] }
+app.put('/api/words/:id', (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const fr = String(req.body?.fr || '').trim();
+    let en = req.body?.en;
+    if (!fr) return res.status(400).json({ error: 'fr_required' });
+    if (!Array.isArray(en)) en = en ? [String(en)] : [];
+    const info = updateWordStmt.run({ id, fr, en: JSON.stringify(en.map(String)) });
+    if (info.changes === 0) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 // Reviews API
 // GET /api/decks/:deckId/reviews -> { items: [...] }
 app.get('/api/decks/:deckId/reviews', (req, res) => {
@@ -171,10 +192,6 @@ app.delete('/api/decks/:deckId/reviews', (req, res) => {
     res.json({ ok: true, deleted: info.changes });
   } catch (e) {
     res.status(500).json({ error: e.message });
-  }
-});
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -364,6 +381,47 @@ app.post('/api/decks', (req, res) => {
   }
 });
 
+// POST /api/decks/:id/copy  body: { name }
+// Creates a new deck with the provided name and copies all words from the source deck.
+app.post('/api/decks/:id/copy', (req, res) => {
+  try {
+    const sourceId = String(req.params.id);
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'name_required' });
+    // Prevent duplicate deck names
+    const exists = getDeckByNameStmt.get(name);
+    if (exists) return res.status(409).json({ error: 'name_exists' });
+
+    const newDeckId = 'd_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    const tx = db.transaction(() => {
+      // Create new deck
+      insertDeckStmt.run({ id: newDeckId, name, created_at: nowSec });
+      // Copy words
+      const words = listWordsByDeckStmt.all(sourceId);
+      for (const w of words) {
+        const newWordId = 'w_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+        insertWordStmt.run({
+          id: newWordId,
+          deck_id: newDeckId,
+          fr: w.fr,
+          en: w.en,
+          errors: w.errors || 0,
+          errors_by_user: w.errors_by_user || JSON.stringify({}),
+          created_at: w.created_at || nowSec
+        });
+      }
+      return { copied: words.length };
+    });
+
+    const result = tx();
+    res.status(201).json({ id: newDeckId, name, copied: result.copied });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // DELETE /api/decks/:id
 app.delete('/api/decks/:id', (req, res) => {
   try {
@@ -435,6 +493,69 @@ app.delete('/api/decks/:deckId/words', (req, res) => {
     const deckId = String(req.params.deckId);
     const info = clearWordsByDeckStmt.run(deckId);
     res.json({ ok: true, deleted: info.changes });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Text-to-Speech via Piper (server-side)
+// Env vars required:
+//  - PIPER_BIN: path to piper binary
+//  - PIPER_MODEL_EN: path to English model (.onnx)
+//  - PIPER_MODEL_DE: path to German model (.onnx)
+app.post('/api/tts', (req, res) => {
+  try {
+    const text = String(req.body?.text || '').trim();
+    const langIn = String(req.body?.lang || 'en').toLowerCase();
+    const lang = (langIn === 'de') ? 'de' : 'en';
+    if (!text) return res.status(400).json({ error: 'text_required' });
+    const bin = process.env.PIPER_BIN || '';
+    const model = lang === 'de' ? (process.env.PIPER_MODEL_DE || '') : (process.env.PIPER_MODEL_EN || '');
+    if (!bin || !model) return res.status(503).json({ error: 'tts_not_configured' });
+
+    // Piper usage: piper --model <model> --output_file -
+    const args = ['--model', model, '--output_file', '-'];
+    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    let headersSent = false;
+    const send500 = (msg) => {
+      try {
+        if (!headersSent) {
+          res.status(500).json({ error: msg || 'tts_failed' });
+        } else {
+          res.end();
+        }
+      } catch {}
+    };
+
+    child.on('error', (err) => {
+      send500(err?.message || 'spawn_error');
+    });
+
+    child.stderr.on('data', (chunk) => {
+      // Optional: log Piper stderr for debugging
+      // console.warn('piper stderr:', chunk.toString());
+    });
+
+    child.stdout.once('data', () => {
+      // First audio bytes -> set header
+      if (!headersSent) {
+        res.setHeader('Content-Type', 'audio/wav');
+        headersSent = true;
+      }
+    });
+
+    child.stdout.pipe(res);
+
+    child.on('close', (code) => {
+      if (!headersSent && code !== 0) {
+        send500('piper_exit_' + code);
+      }
+    });
+
+    // Feed text to Piper
+    child.stdin.write(text + '\n');
+    child.stdin.end();
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

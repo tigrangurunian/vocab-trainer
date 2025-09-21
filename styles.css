@@ -273,6 +273,47 @@ button[aria-pressed="true"] { outline: 2px solid rgba(96, 165, 250, 0.35); }
   font-weight: 600;
 }
 .words-list .translations { color: var(--muted); }
+.words-list .word, .words-list .translations {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inline editable inputs */
+.inline-input {
+  width: 100%;
+  background: #101733;
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  outline: none;
+}
+.inline-input:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 2px rgba(96,165,250,0.25);
+}
+.inline-input.success {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34,197,94,0.25);
+}
+.inline-input.error {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 2px rgba(239,68,68,0.25);
+}
+
+/* Save tick indicator */
+.save-tick {
+  color: #22c55e;
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity .2s ease;
+  margin-left: 6px;
+}
+.save-tick.show {
+  opacity: 1;
+}
+
 .badge {
   display: inline-block;
   padding: 2px 8px;
