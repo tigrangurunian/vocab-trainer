@@ -1,4 +1,4 @@
-// Vocab Trainer FR -> EN
+// Brain Sport FR -> EN
 // Stockage local: localStorage
 
 (function() {
@@ -201,7 +201,7 @@
     }
     // Also update the browser tab title with the mascot
     try {
-      const baseTitle = 'Vocab Trainer FR ↔ EN';
+      const baseTitle = 'Brain Sport FR ↔ EN';
       const emoji = (prefs && prefs.mascot) ? prefs.mascot + ' ' : '';
       document.title = `${emoji}${baseTitle}`;
     } catch {}

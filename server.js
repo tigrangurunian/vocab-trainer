@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'vocab.db');
 
 // Initialize DB
+console.log('[Startup] DB_PATH in use:', DB_PATH);
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
@@ -574,5 +575,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Vocab Trainer server listening on http://127.0.0.1:${PORT}`);
+  console.log(`BrainSport server listening on http://127.0.0.1:${PORT}`);
 });
