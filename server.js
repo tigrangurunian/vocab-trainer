@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
 
 // Configuration
 const PORT = process.env.PORT || 3000;
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'vocab.db');
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'voc2.db');
 
 // Initialize DB
 console.log('[Startup] DB_PATH in use:', DB_PATH);
