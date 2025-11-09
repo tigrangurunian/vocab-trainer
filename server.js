@@ -70,39 +70,65 @@ CREATE TABLE IF NOT EXISTS reviews (
 
 // Migration: add is_public column to decks if missing (default public)
 try {
+  console.log('[Migration] Checking deck privacy column...');
   const cols = db.prepare("PRAGMA table_info('decks')").all();
   const hasIsPublic = cols.some(c => String(c.name) === 'is_public');
   if (!hasIsPublic) {
+    console.log('[Migration] Adding is_public column to decks...');
     db.exec("ALTER TABLE decks ADD COLUMN is_public INTEGER NOT NULL DEFAULT 1");
     db.exec("UPDATE decks SET is_public = 1 WHERE is_public IS NULL");
+    console.log('[Migration] Deck privacy column added successfully');
+  } else {
+    console.log('[Migration] Deck privacy column already exists');
   }
-} catch (e) { console.warn('Deck privacy migration failed:', e.message); }
+} catch (e) {
+  console.error('[Migration] Deck privacy migration FAILED:', e.message);
+}
 
 // Migration: add owner_user_id to decks to support private ownership
 try {
+  console.log('[Migration] Checking deck owner column...');
   const dcols = db.prepare("PRAGMA table_info('decks')").all();
   const hasOwner = dcols.some(c => String(c.name) === 'owner_user_id');
   if (!hasOwner) {
+    console.log('[Migration] Adding owner_user_id column to decks...');
     db.exec("ALTER TABLE decks ADD COLUMN owner_user_id TEXT NULL");
+    console.log('[Migration] Deck owner column added successfully');
+  } else {
+    console.log('[Migration] Deck owner column already exists');
   }
-} catch (e) { console.warn('Deck owner migration failed:', e.message); }
+} catch (e) {
+  console.error('[Migration] Deck owner migration FAILED:', e.message);
+}
 
 // Migration: add authentication/admin fields to users if missing
 try {
+  console.log('[Migration] Checking user auth columns...');
   const ucols = db.prepare("PRAGMA table_info('users')").all();
   const hasUser = ucols.some(c => String(c.name) === 'user');
   const hasPassword = ucols.some(c => String(c.name) === 'password');
   const hasIsAdmin = ucols.some(c => String(c.name) === 'is_admin');
+  
   if (!hasUser) {
+    console.log('[Migration] Adding user column to users...');
     db.exec("ALTER TABLE users ADD COLUMN user TEXT");
+    console.log('[Migration] User column added');
   }
   if (!hasPassword) {
+    console.log('[Migration] Adding password column to users...');
     db.exec("ALTER TABLE users ADD COLUMN password TEXT");
+    console.log('[Migration] Password column added');
   }
   if (!hasIsAdmin) {
+    console.log('[Migration] Adding is_admin column to users...');
     db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+    console.log('[Migration] is_admin column added');
   }
-} catch (e) { console.warn('Users auth/admin migration failed:', e.message); }
+  
+  console.log('[Migration] User auth columns migration completed');
+} catch (e) {
+  console.error('[Migration] Users auth/admin migration FAILED:', e.message);
+}
 
 const getKvStmt = db.prepare('SELECT value FROM kv WHERE key = ?');
 const putKvStmt = db.prepare(`
