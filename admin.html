@@ -27,11 +27,23 @@
     .mono { font-family: ui-monospace, Menlo, Monaco, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
     .footer { margin-top: 16px; color:#9aa4c4; font-size: 12px; }
     .hl { color:#60a5fa; }
+    .header-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .user-info { display: flex; align-items: center; gap: 8px; background: #0f162f; border: 1px solid #2a3863; border-radius: 8px; padding: 8px 16px; }
+    .user-info .badge { font-size: 20px; }
+    .user-info .name { font-weight: 600; color: #60a5fa; }
+    .logout-btn { background: #421b1b; border: 1px solid #6d3131; color: #e6e9f2; padding: 6px 12px; border-radius: 6px; font-size: 14px; cursor: pointer; }
+    .logout-btn:hover { background: #5a2323; }
   </style>
 </head>
 <body>
-  <h1>Admin DB — <span class="hl">Brain Sport</span></h1>
-  
+  <div class="header-bar">
+    <h1 style="margin: 0;">Admin DB — <span class="hl">Brain Sport</span></h1>
+    <div class="user-info">
+      <span class="badge">👤</span>
+      <span class="name" id="adminUserName">Chargement...</span>
+      <button class="logout-btn" id="adminLogoutBtn">Déconnexion</button>
+    </div>
+  </div>
 
   <div class="panel" style="margin-top:16px;">
     <h3>Préférences Utilisateur</h3>
@@ -50,8 +62,13 @@
 
   <div class="panel" style="margin-top:16px;">
     <h3>Utilisateurs (CRUD)</h3>
-    <div class="row" style="gap:12px;">
-      <input id="newUserName" placeholder="Nom utilisateur" />
+    <div class="row" style="gap:12px; flex-wrap: wrap;">
+      <input id="newUserName" placeholder="Nom (affiché)" />
+      <input id="newUserLogin" placeholder="Login (optionnel)" />
+      <input id="newUserPassword" placeholder="Mot de passe (optionnel)" type="password" />
+      <label class="row" style="gap:6px;">
+        <input id="newUserIsAdmin" type="checkbox" /> <span>Admin</span>
+      </label>
       <button id="createUserBtn" class="success">Créer</button>
       <button id="reloadUsersBtn">Recharger</button>
     </div>
@@ -97,14 +114,31 @@
     <ul id="adminReviewsList" style="margin-top:8px;"></ul>
   </div>
 
+  <div class="panel" style="margin-top:16px;">
+    <h3>Import/Export Vocabulaire</h3>
+    <div class="row" style="gap:12px; margin-bottom: 8px;">
+      <button id="exportDecksBtn" class="success">Exporter TOUS les decks</button>
+      <button id="importDecksBtn" class="danger">Importer decks</button>
+    </div>
+    <div id="exportImportStatus" style="margin-top:8px; min-height: 20px;"></div>
+    <textarea id="importExportTextarea" rows="10" class="mono" placeholder="Collez ici le JSON exporté pour importer..." style="margin-top:8px; display:none;"></textarea>
+    <div class="row" style="gap:8px; margin-top:8px; display:none;" id="importActions">
+      <button id="confirmImportBtn" class="success">Confirmer import</button>
+      <button id="cancelImportBtn">Annuler</button>
+    </div>
+    <div style="margin-top:8px; color:#9aa4c4; font-size:12px;">
+      <strong>⚠️ Export complet :</strong> Tous les decks (publics ET privés) avec leurs mots associés.<br>
+      <strong>Format JSON :</strong> [{ "name": "Deck Name", "words": [{ "fr": "mot", "en": ["translation"] }, ...] }, ...]
+    </div>
+  </div>
+
   <div class="footer">
     Admin: Utilisateurs, Decks, Mots et Préférences — Health: /api/health
   </div>
 
   <script>
+
     const $ = sel => document.querySelector(sel);
-    const usersSelect = $('#usersSelect');
-    const prefsTextarea = $('#prefsTextarea');
 
     async function api(path, opts) {
       const res = await fetch(path, opts);
@@ -112,7 +146,194 @@
       return res.headers.get('content-type')?.includes('application/json') ? res.json() : res.text();
     }
 
+    function setStatus(msg) {
+      console.log('[Status]', msg);
+    }
+
+    // Check if user is admin
+    async function checkAdminAccess() {
+      try {
+        const me = await api('/api/me');
+        const user = me?.user;
+        if (!user || !user.is_admin) {
+          document.body.innerHTML = '<div style="text-align:center; margin-top:100px;"><h1>❌ Accès refusé</h1><p>Cette page est réservée aux administrateurs.</p><p><a href="/" style="color:#60a5fa;">Retour à l\'accueil</a></p></div>';
+          throw new Error('Access denied: user is not admin');
+        }
+        console.log('[Admin] Access granted for:', user.name);
+        
+        // Display user name in header
+        const userNameEl = document.getElementById('adminUserName');
+        if (userNameEl) {
+          userNameEl.textContent = user.name;
+        }
+        
+        return true;
+      } catch (e) {
+        console.error('[Admin] Access check failed:', e);
+        document.body.innerHTML = '<div style="text-align:center; margin-top:100px;"><h1>❌ Accès refusé</h1><p>Vous devez être connecté en tant qu\'administrateur.</p><p><a href="/" style="color:#60a5fa;">Retour à l\'accueil</a></p></div>';
+        return false;
+      }
+    }
+
+    // ---- Logout ----
+    async function logout() {
+      try {
+        await api('/api/logout', { method: 'POST' });
+        console.log('[Admin] Logged out successfully');
+        // Redirect to home page
+        window.location.href = '/';
+      } catch (e) {
+        console.error('[Admin] Logout failed:', e);
+        // Even if logout fails, redirect to home
+        window.location.href = '/';
+      }
+    }
+    async function exportDecks() {
+      try {
+        const status = $('#exportImportStatus');
+        status.textContent = 'Chargement de tous les decks...';
+        
+        const decks = await api('/api/admin/decks');
+        const exportData = [];
+        
+        for (const deck of decks.items || []) {
+          try {
+            const words = await api(`/api/decks/${encodeURIComponent(deck.id)}/words`);
+            exportData.push({
+              id: deck.id,
+              name: deck.name,
+              isPublic: deck.is_public,
+              createdAt: deck.created_at,
+              words: (words.items || []).map(w => ({
+                fr: w.fr,
+                en: w.en,
+                errors: w.errors,
+                errorsByUser: w.errorsByUser,
+                createdAt: w.createdAt
+              }))
+            });
+          } catch (e) {
+            console.warn(`Failed to load words for deck ${deck.id}:`, e);
+          }
+        }
+        
+        const json = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `vocab-export-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        status.textContent = `✅ Export réussi : ${exportData.length} decks exportés (tous les decks, publics et privés)`;
+        status.style.color = '#10b981';
+      } catch (e) {
+        $('#exportImportStatus').textContent = '❌ Erreur export : ' + e.message;
+        $('#exportImportStatus').style.color = '#ef4444';
+      }
+    }
     
+    async function prepareImport() {
+      const textarea = $('#importExportTextarea');
+      const actions = $('#importActions');
+      textarea.style.display = 'block';
+      actions.style.display = 'flex';
+      $('#exportImportStatus').textContent = 'Collez le JSON à importer ci-dessous puis cliquez sur "Confirmer import"';
+      textarea.focus();
+    }
+    
+    function cancelImport() {
+      const textarea = $('#importExportTextarea');
+      const actions = $('#importActions');
+      textarea.style.display = 'none';
+      actions.style.display = 'none';
+      textarea.value = '';
+      $('#exportImportStatus').textContent = '';
+    }
+    
+    async function confirmImport() {
+      try {
+        const status = $('#exportImportStatus');
+        const textarea = $('#importExportTextarea');
+        const jsonText = textarea.value.trim();
+        
+        if (!jsonText) {
+          status.textContent = '❌ Veuillez coller un JSON valide';
+          status.style.color = '#ef4444';
+          return;
+        }
+        
+        status.textContent = 'Validation du JSON...';
+        const importData = JSON.parse(jsonText);
+        
+        if (!Array.isArray(importData)) {
+          throw new Error('Le JSON doit être un tableau de decks');
+        }
+        
+        let importedDecks = 0;
+        let importedWords = 0;
+        
+        for (const deckData of importData) {
+          if (!deckData.name || !Array.isArray(deckData.words)) {
+            console.warn('Skipping invalid deck:', deckData);
+            continue;
+          }
+          
+          status.textContent = `Création du deck "${deckData.name}"...`;
+          
+          // Create deck
+          const deckRes = await fetch('/api/decks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: deckData.name })
+          });
+          
+          if (!deckRes.ok) {
+            console.warn('Failed to create deck:', deckData.name, await deckRes.text());
+            continue;
+          }
+          
+          const newDeck = await deckRes.json();
+          importedDecks++;
+          
+          // Add words
+          for (const wordData of deckData.words) {
+            if (!wordData.fr || !wordData.en) continue;
+            
+            try {
+              await fetch(`/api/decks/${encodeURIComponent(newDeck.id)}/words`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  fr: wordData.fr,
+                  en: wordData.en
+                })
+              });
+              importedWords++;
+            } catch (e) {
+              console.warn('Failed to add word:', wordData.fr, e);
+            }
+          }
+        }
+        
+        status.textContent = `✅ Import réussi : ${importedDecks} decks et ${importedWords} mots importés`;
+        status.style.color = '#10b981';
+        
+        // Refresh decks list
+        adminReloadDecks();
+        
+        // Hide import UI
+        cancelImport();
+        
+      } catch (e) {
+        $('#exportImportStatus').textContent = '❌ Erreur import : ' + e.message;
+        $('#exportImportStatus').style.color = '#ef4444';
+      }
+    }
 
     // ---- Users prefs admin ----
     async function refreshUsersList() {
@@ -125,18 +346,25 @@
           opt.textContent = `${u.name} (${u.id})`;
           usersSelect.appendChild(opt);
         });
+        return true;
       } catch (e) {
         console.error(e);
         setStatus('Erreur chargement utilisateurs: ' + e.message);
+        return false;
       }
     }
 
     async function loadPrefsForSelected() {
       const id = usersSelect.value;
-      if (!id) return alert('Choisir un utilisateur');
+      console.log('[loadPrefsForSelected] userId:', id);
+      if (!id) {
+        console.log('[loadPrefsForSelected] No user selected');
+        return;
+      }
       setStatus('Chargement prefs...');
       try {
         const res = await fetch(`/api/users/${encodeURIComponent(id)}/prefs`);
+        console.log('[loadPrefsForSelected] Response status:', res.status);
         if (res.status === 404) {
           prefsTextarea.value = '';
           setStatus('Aucune prefs pour cet utilisateur');
@@ -144,9 +372,11 @@
         }
         if (!res.ok) throw new Error(await res.text());
         const data = await res.json();
+        console.log('[loadPrefsForSelected] Loaded prefs:', data.prefs);
         prefsTextarea.value = JSON.stringify(data.prefs || {}, null, 2);
         setStatus('OK');
       } catch (e) {
+        console.error('[loadPrefsForSelected] Error:', e);
         setStatus('Erreur: ' + e.message);
       }
     }
@@ -173,8 +403,14 @@
     document.getElementById('usersRefreshBtn').addEventListener('click', refreshUsersList);
     document.getElementById('loadPrefsBtn').addEventListener('click', loadPrefsForSelected);
     document.getElementById('savePrefsBtn').addEventListener('click', savePrefsForSelected);
+    
+    // Auto-load prefs when user selection changes
+    usersSelect.addEventListener('change', loadPrefsForSelected);
 
-    refreshUsersList();
+    refreshUsersList().then(() => {
+      // Auto-load prefs for first user
+      if (usersSelect.value) loadPrefsForSelected();
+    });
 
     // ---- Users CRUD ----
     async function adminReloadUsers() {
@@ -184,8 +420,53 @@
       (data.items || []).forEach(u => {
         const li = document.createElement('li');
         const left = document.createElement('div');
-        left.innerHTML = `<div class="key">${u.name}</div><div class="muted">id: ${u.id}</div>`;
+        const adminLabel = u.is_admin ? 'Admin' : 'User';
+        const loginLabel = u.user ? `login: ${u.user}` : 'login: —';
+        left.innerHTML = `<div class="key">${u.name} <span class=\"muted\">(${adminLabel})</span></div><div class=\"muted\">id: ${u.id} • ${loginLabel}</div>`;
         const right = document.createElement('div');
+        // Inline edit controls
+        const wrap = document.createElement('div');
+        wrap.className = 'row';
+        wrap.style.gap = '6px';
+        const nameInp = document.createElement('input');
+        nameInp.placeholder = 'Nom';
+        nameInp.value = u.name || '';
+        nameInp.style.width = '140px';
+        const loginInp = document.createElement('input');
+        loginInp.placeholder = 'Login';
+        loginInp.value = u.user || '';
+        loginInp.style.width = '120px';
+        const passInp = document.createElement('input');
+        passInp.placeholder = 'Mot de passe (remplir pour changer)';
+        passInp.type = 'password';
+        passInp.style.width = '200px';
+        const adminCb = document.createElement('input');
+        adminCb.type = 'checkbox';
+        adminCb.checked = !!u.is_admin;
+        const adminLbl = document.createElement('span');
+        adminLbl.textContent = 'Admin';
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = 'Enregistrer';
+        saveBtn.className = 'success';
+        saveBtn.addEventListener('click', async () => {
+          try {
+            const payload = {
+              name: nameInp.value,
+              user: loginInp.value || null,
+              isAdmin: !!adminCb.checked
+            };
+            if (passInp.value) payload.password = passInp.value; // only send if changing
+            const r = await fetch(`/api/users/${encodeURIComponent(u.id)}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            if (!r.ok) return alert(await r.text());
+            adminReloadUsers();
+          } catch (e) {
+            alert('Erreur enregistrement: ' + (e.message || e));
+          }
+        });
         const del = document.createElement('button');
         del.className = 'danger';
         del.textContent = 'Supprimer';
@@ -196,22 +477,47 @@
           adminReloadUsers();
           refreshUsersList();
         });
+        wrap.appendChild(nameInp);
+        wrap.appendChild(loginInp);
+        wrap.appendChild(passInp);
+        const adminWrap = document.createElement('label');
+        adminWrap.className = 'row'; adminWrap.style.gap = '6px';
+        adminWrap.appendChild(adminCb); adminWrap.appendChild(adminLbl);
+        wrap.appendChild(adminWrap);
+        wrap.appendChild(saveBtn);
+        right.appendChild(wrap);
         right.appendChild(del);
         li.appendChild(left);
         li.appendChild(right);
         ul.appendChild(li);
       });
     }
+    // Clear user creation fields on page load
+    document.getElementById('newUserName').value = '';
+    document.getElementById('newUserLogin').value = '';
+    document.getElementById('newUserPassword').value = '';
+    document.getElementById('newUserIsAdmin').checked = false;
+
     document.getElementById('reloadUsersBtn').addEventListener('click', adminReloadUsers);
     document.getElementById('createUserBtn').addEventListener('click', async () => {
       const name = (document.getElementById('newUserName').value || '').trim();
+      const userLogin = (document.getElementById('newUserLogin').value || '').trim();
+      const password = (document.getElementById('newUserPassword').value || '').trim();
+      const isAdmin = document.getElementById('newUserIsAdmin').checked;
       if (!name) return alert('Nom requis');
+      const body = { name };
+      if (userLogin) body.user = userLogin;
+      if (password) body.password = password;
+      if (isAdmin) body.isAdmin = true;
       const res = await fetch('/api/users', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       if (res.status === 409) return alert('Nom déjà existant');
       if (!res.ok) return alert(await res.text());
       document.getElementById('newUserName').value = '';
+      document.getElementById('newUserLogin').value = '';
+      document.getElementById('newUserPassword').value = '';
+      document.getElementById('newUserIsAdmin').checked = false;
       adminReloadUsers();
       refreshUsersList();
     });
@@ -220,6 +526,8 @@
     // ---- Decks CRUD ----
     async function adminReloadDecks() {
       const data = await api('/api/decks');
+      const usersData = await api('/api/users');
+      const users = usersData.items || [];
       const ul = document.getElementById('adminDecksList');
       ul.innerHTML = '';
       const select = document.getElementById('wordsDeckSelect');
@@ -227,8 +535,85 @@
       (data.items || []).forEach(d => {
         const li = document.createElement('li');
         const left = document.createElement('div');
-        left.innerHTML = `<div class="key">${d.name}</div><div class="muted">id: ${d.id}</div>`;
+        const isPublic = (d.is_public !== undefined ? !!d.is_public : true);
+        const visLabel = isPublic ? 'Public' : 'Privé';
+        const ownerName = d.owner_user_id ? (users.find(u => u.id === d.owner_user_id)?.name || '(inconnu)') : '(aucun)';
+        left.innerHTML = `<div class="key">${d.name} <span class="muted">(${visLabel})</span></div><div class="muted">id: ${d.id} • propriétaire: ${ownerName}</div>`;
         const right = document.createElement('div');
+        right.className = 'row';
+        right.style.gap = '8px';
+        right.style.flexWrap = 'wrap';
+        
+        // Owner dropdown
+        const ownerSelect = document.createElement('select');
+        ownerSelect.style.width = '140px';
+        const noneOpt = document.createElement('option');
+        noneOpt.value = '';
+        noneOpt.textContent = '(aucun propriétaire)';
+        ownerSelect.appendChild(noneOpt);
+        users.forEach(u => {
+          const opt = document.createElement('option');
+          opt.value = u.id;
+          opt.textContent = u.name;
+          if (u.id === d.owner_user_id) opt.selected = true;
+          ownerSelect.appendChild(opt);
+        });
+        ownerSelect.addEventListener('change', async () => {
+          try {
+            const newOwnerId = ownerSelect.value || null;
+            const r = await fetch(`/api/decks/${encodeURIComponent(d.id)}/owner`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ownerId: newOwnerId })
+            });
+            if (!r.ok) {
+              ownerSelect.value = d.owner_user_id || '';
+              return alert(await r.text());
+            }
+            d.owner_user_id = newOwnerId;
+            const newOwnerName = newOwnerId ? (users.find(u => u.id === newOwnerId)?.name || '(inconnu)') : '(aucun)';
+            left.innerHTML = `<div class="key">${d.name} <span class=\"muted\">(${visLabel})</span></div><div class=\"muted\">id: ${d.id} • propriétaire: ${newOwnerName}</div>`;
+          } catch (e) {
+            ownerSelect.value = d.owner_user_id || '';
+            alert('Erreur mise à jour propriétaire: ' + (e.message || e));
+          }
+        });
+        
+        // Privacy checkbox (checked = privé)
+        const lab = document.createElement('label');
+        lab.className = 'row';
+        lab.style.gap = '6px';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !isPublic;
+        cb.title = 'Cocher pour rendre privé';
+        cb.addEventListener('change', async () => {
+          try {
+            const targetIsPublic = !cb.checked;
+            const r = await fetch(`/api/decks/${encodeURIComponent(d.id)}/privacy`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ isPublic: targetIsPublic })
+            });
+            if (!r.ok) {
+              cb.checked = isPublic ? false : true; // revert
+              return alert(await r.text());
+            }
+            // Update label
+            const newIsPublic = targetIsPublic;
+            const newVisLabel = newIsPublic ? 'Public' : 'Privé';
+            const currentOwnerName = d.owner_user_id ? (users.find(u => u.id === d.owner_user_id)?.name || '(inconnu)') : '(aucun)';
+            left.innerHTML = `<div class="key">${d.name} <span class=\"muted\">(${newVisLabel})</span></div><div class=\"muted\">id: ${d.id} • propriétaire: ${currentOwnerName}</div>`;
+          } catch (e) {
+            cb.checked = !cb.checked; // revert on error
+            alert('Erreur mise à jour visibilité: ' + (e.message || e));
+          }
+        });
+        const spanLab = document.createElement('span');
+        spanLab.textContent = 'Privé';
+        lab.appendChild(cb);
+        lab.appendChild(spanLab);
+        
         const del = document.createElement('button');
         del.className = 'danger';
         del.textContent = 'Supprimer';
@@ -238,6 +623,9 @@
           if (!res.ok) return alert(await res.text());
           adminReloadDecks();
         });
+        
+        right.appendChild(ownerSelect);
+        right.appendChild(lab);
         right.appendChild(del);
         li.appendChild(left);
         li.appendChild(right);
@@ -373,8 +761,28 @@
       adminReloadReviews();
     });
 
-    // init reviews selectors and list
-    seedReviewsSelectors().then(adminReloadReviews);
+    // Check admin access before initializing
+    (async function init() {
+      const hasAccess = await checkAdminAccess();
+      if (!hasAccess) return;
+      
+      // Add logout event listener
+      document.getElementById('adminLogoutBtn').addEventListener('click', () => {
+        if (confirm('Êtes-vous sûr de vouloir vous déconnecter ?')) {
+          logout();
+        }
+      });
+      
+      // Add export/import event listeners
+      document.getElementById('exportDecksBtn').addEventListener('click', exportDecks);
+      document.getElementById('importDecksBtn').addEventListener('click', prepareImport);
+      document.getElementById('confirmImportBtn').addEventListener('click', confirmImport);
+      document.getElementById('cancelImportBtn').addEventListener('click', cancelImport);
+      
+      // init reviews selectors and list
+      await seedReviewsSelectors();
+      adminReloadReviews();
+    })();
   </script>
 </body>
 </html>

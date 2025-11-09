@@ -45,6 +45,18 @@ window.api = {
     }
     return res.json();
   },
+  async updateDeckPrivacy(id, isPublic) {
+    const res = await fetch(`/api/decks/${encodeURIComponent(id)}/privacy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isPublic: !!isPublic })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err.error || 'deck_privacy_update_failed');
+    }
+    return res.json();
+  },
   // Words
   async getWords(deckId) {
     const res = await fetch(`/api/decks/${encodeURIComponent(deckId)}/words`);
@@ -93,7 +105,10 @@ window.api = {
     return res.json();
   },
   async getPrefs(userId) {
-    const res = await fetch(`/api/users/${encodeURIComponent(userId)}/prefs`);
+    const res = await fetch(`/api/users/${encodeURIComponent(userId)}/prefs`, {
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-cache' }
+    });
     if (res.status === 404) return null;
     if (!res.ok) throw new Error('Failed to load prefs');
     const data = await res.json();
@@ -156,6 +171,30 @@ window.api = {
       const err = await res.json().catch(()=>({}));
       throw new Error(err.error || 'reviews_clear_failed');
     }
+    return res.json();
+  },
+  // Auth
+  async getMe() {
+    const res = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store' });
+    if (!res.ok) throw new Error('me_failed');
+    return res.json();
+  },
+  async login(user, password) {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ user, password })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err.error || 'login_failed');
+    }
+    return res.json();
+  },
+  async logout() {
+    const res = await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+    if (!res.ok) throw new Error('logout_failed');
     return res.json();
   }
 };

@@ -14,7 +14,6 @@
   const reviewTab = document.getElementById('review');
   const prefsTab = document.getElementById('prefs');
   const statsTab = document.getElementById('stats');
-  const usersTab = document.getElementById('users');
 
   const addForm = document.getElementById('addWordForm');
   const frInput = document.getElementById('frInput');
@@ -29,12 +28,13 @@
   const deckSelect = document.getElementById('deckSelect');
   const newDeckBtn = document.getElementById('newDeckBtn');
   const copyDeckBtn = document.getElementById('copyDeckBtn');
-  const userSelect = document.getElementById('userSelect');
-  const newUserBtn = document.getElementById('newUserBtn');
+  const deckPrivacyCheckbox = document.getElementById('deckPrivacyCheckbox');
+  const loginLink = document.getElementById('loginLink');
+  const authUserLabel = document.getElementById('authUserLabel');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const statsTabBtn = document.getElementById('statsTabBtn');
+  const authStatus = document.getElementById('authStatus');
   const userBadge = document.getElementById('userBadge');
-  const currentUserNameTop = document.getElementById('currentUserNameTop');
-  const usersListEl = document.getElementById('usersList');
-  const deleteUserBtn = document.getElementById('deleteUserBtn');
 
   const startReviewBtn = document.getElementById('startReviewBtn');
   const shuffleToggle = document.getElementById('shuffleToggle');
@@ -83,16 +83,102 @@
   // ---- Server history (reviews) sync ----
   async function fetchHistoryFromServer() {
     if (!window.api || !window.api.getReviews || !prefs.selectedDeckId) return;
+    // Only logged-in users can load history/stats
+    if (!window.authUser) {
+      history = [];
+      saveHistory();
+      return;
+    }
     try {
       const items = await window.api.getReviews(prefs.selectedDeckId);
       // Items already shaped similarly: { startedAt, endedAt, durationMs, totalQuestions, uniqueWords, perWord, summary, userId, deckId }
       history = Array.isArray(items) ? items.slice() : [];
       saveHistory();
       renderHistory();
-      renderStatsChart();
+      if (window.authUser) renderStatsChart();
     } catch (err) {
       console.warn('fetchHistoryFromServer failed:', err);
     }
+  }
+
+  // ---- Auth UI ----
+  async function refreshAuthUI() {
+    try {
+      if (!window.api || typeof window.api.getMe !== 'function') {
+        console.log('[refreshAuthUI] api.getMe not available');
+        return;
+      }
+      console.log('[refreshAuthUI] Calling api.getMe()...');
+      const me = await window.api.getMe();
+      console.log('[refreshAuthUI] api.getMe() response:', me);
+      const u = me?.user || null;
+      window.authUser = u;
+      const logged = !!u;
+      console.log('[refreshAuthUI] logged:', logged, 'user:', u);
+      if (loginLink) loginLink.style.display = logged ? 'none' : '';
+      if (logoutBtn) logoutBtn.style.display = logged ? '' : 'none';
+      if (authStatus) authStatus.textContent = `Logged: ${logged}`;
+      if (authUserLabel) {
+        authUserLabel.style.display = logged ? '' : 'none';
+        if (logged) authUserLabel.textContent = u.name || u.user || u.id;
+      }
+      if (statsTabBtn) statsTabBtn.style.display = logged ? '' : 'none';
+      
+      // Show/hide privacy checkbox based on login status
+      const privacyLabel = deckPrivacyCheckbox?.parentElement;
+      if (privacyLabel) {
+        privacyLabel.style.display = logged ? '' : 'none';
+      }
+      
+      // Sync selected user with authenticated user if logged in
+      if (logged && u.id) {
+        // Check if this user exists in the users list
+        const userExists = users.some(usr => usr.id === u.id);
+        if (userExists && prefs.selectedUserId !== u.id) {
+          prefs.selectedUserId = u.id;
+          savePrefs();
+        }
+        // Load preferences for the authenticated user
+        await syncPrefsFromServer(u.id);
+      }
+      
+      // Update user badge based on login status
+      applyUserBadge();
+    } catch (e) {
+      // default to guest
+      console.error('[refreshAuthUI] Error:', e);
+      window.authUser = null;
+      if (loginLink) loginLink.style.display = '';
+      if (logoutBtn) logoutBtn.style.display = 'none';
+      if (authStatus) authStatus.textContent = 'Logged: false';
+      if (authUserLabel) authUserLabel.style.display = 'none';
+      if (statsTabBtn) statsTabBtn.style.display = 'none';
+      
+      // Hide privacy checkbox when not logged in
+      const privacyLabel = deckPrivacyCheckbox?.parentElement;
+      if (privacyLabel) {
+        privacyLabel.style.display = 'none';
+      }
+      
+      // When not logged in, use 'default' as selectedUserId
+      if (prefs.selectedUserId !== 'default') {
+        prefs.selectedUserId = 'default';
+        savePrefs();
+      }
+      
+      // Update user badge to show robot emoji
+      applyUserBadge();
+    }
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      try {
+        if (window.api && typeof window.api.logout === 'function') await window.api.logout();
+      } catch {}
+      location.href = '/';
+    });
+  }
 
   // TTS preferences wiring
   if (ttsLangSelect) {
@@ -102,13 +188,36 @@
       savePrefs();
     });
   }
+
+  // Deck privacy toggle (checkbox checked = private)
+  if (deckPrivacyCheckbox) {
+    deckPrivacyCheckbox.addEventListener('change', async () => {
+      const deckId = prefs.selectedDeckId;
+      if (!deckId || !window.api || typeof window.api.updateDeckPrivacy !== 'function') return;
+      const makePrivate = deckPrivacyCheckbox.checked;
+      const newIsPublic = !makePrivate;
+      // optimistic UI update
+      const d = decks.find(x => x.id === deckId);
+      const prev = d ? !!d.isPublic : true;
+      if (d) d.isPublic = newIsPublic;
+      try {
+        await window.api.updateDeckPrivacy(deckId, newIsPublic);
+        saveDecks();
+      } catch (e) {
+        // revert UI on error
+        if (d) d.isPublic = prev;
+        deckPrivacyCheckbox.checked = !prev; // since checked = private
+        alert('Erreur mise à jour visibilité: ' + (e.message || e));
+      }
+    });
+  }
+
   if (ttsProviderSelect) {
     ttsProviderSelect.value = (prefs && prefs.ttsProvider) || 'web';
     ttsProviderSelect.addEventListener('change', () => {
       prefs.ttsProvider = ttsProviderSelect.value;
       savePrefs();
     });
-  }
   }
 
   function loadWords() {
@@ -126,24 +235,43 @@
     if (!window.api || !window.api.getDecks) return;
     try {
       const list = await window.api.getDecks();
-      decks = (list || []).map(d => ({ id: d.id, name: d.name, createdAt: (d.created_at ? d.created_at * 1000 : Date.now()) }));
+      decks = (list || []).map(d => ({ id: d.id, name: d.name, createdAt: (d.created_at ? d.created_at * 1000 : Date.now()), isPublic: (d.is_public !== undefined ? !!d.is_public : true) }));
       saveDecks();
-      if (!prefs.selectedDeckId || !decks.some(d => d.id === prefs.selectedDeckId)) {
+      const oldDeckId = getSelectedDeckId();
+      const selectedDeckId = getSelectedDeckId();
+      if (!selectedDeckId || !decks.some(d => d.id === selectedDeckId)) {
+        console.log('[fetchDecksFromServer] Selected deck not found:', selectedDeckId, '- switching to first deck');
         if (decks[0]) {
-          prefs.selectedDeckId = decks[0].id;
-          savePrefs();
+          setSelectedDeckId(decks[0].id);
+          console.log('[fetchDecksFromServer] New selected deck:', decks[0].id);
         }
       }
       renderDecks();
+      // Sync privacy checkbox state with current selection
+      if (deckPrivacyCheckbox) {
+        const cur = decks.find(d => d.id === getSelectedDeckId());
+        deckPrivacyCheckbox.checked = cur ? !cur.isPublic : false;
+      }
+      // If deck changed, reload words
+      if (oldDeckId !== getSelectedDeckId()) {
+        console.log('[fetchDecksFromServer] Deck changed, reloading words');
+        await fetchWordsForSelectedDeck();
+      }
     } catch (err) {
       console.warn('fetchDecksFromServer failed:', err);
     }
   }
 
   async function fetchWordsForSelectedDeck() {
-    if (!window.api || !window.api.getWords || !prefs.selectedDeckId) return;
+    const selectedDeckId = getSelectedDeckId();
+    if (!window.api || !window.api.getWords || !selectedDeckId) {
+      console.log('[fetchWordsForSelectedDeck] Skipped - api:', !!window.api, 'selectedDeckId:', selectedDeckId);
+      return;
+    }
+    console.log('[fetchWordsForSelectedDeck] Fetching words for deck:', selectedDeckId);
     try {
-      const items = await window.api.getWords(prefs.selectedDeckId);
+      const items = await window.api.getWords(selectedDeckId);
+      console.log('[fetchWordsForSelectedDeck] Received', items?.length || 0, 'words');
       words = (items || []).map(w => ({
         id: w.id,
         fr: w.fr,
@@ -151,7 +279,7 @@
         errors: w.errors || 0,
         errorsByUser: w.errorsByUser || {},
         createdAt: w.createdAt || Date.now(),
-        deckId: prefs.selectedDeckId,
+        deckId: selectedDeckId,
       }));
       saveWords();
       renderWords();
@@ -161,15 +289,9 @@
     }
   }
 
+  // User management moved to admin page
   function updateUserTabState() {
-    if (!deleteUserBtn) return;
-    const selectedId = prefs.selectedUserId;
-    const isLast = users.length <= 1;
-    const hasHist = history.some(h => h.userId === selectedId);
-    deleteUserBtn.disabled = isLast || hasHist;
-    deleteUserBtn.title = isLast
-      ? 'Impossible de supprimer le dernier utilisateur'
-      : (hasHist ? "Cet utilisateur a de l'historique et ne peut pas être supprimé." : 'Supprimer utilisateur');
+    // No longer needed - user management is in admin page
   }
 
   // ------- Toast notifications -------
@@ -414,7 +536,9 @@
   function loadPrefs() {
     try {
       const raw = localStorage.getItem(PREFS_KEY);
-      return raw ? JSON.parse(raw) : { shuffle: true, fireworks: true, theme: 'dark', mascot: '🦊', ttsLang: 'en', ttsProvider: 'web', celebrateImageEnabled: false, celebrateImageData: null };
+      const prefs = raw ? JSON.parse(raw) : { shuffle: true, fireworks: true, theme: 'dark', mascot: '🦊', ttsLang: 'en', ttsProvider: 'web', celebrateImageEnabled: false, celebrateImageData: null };
+      console.log('[loadPrefs] Loaded preferences:', prefs);
+      return prefs;
     } catch (e) {
       return { shuffle: true, fireworks: true, theme: 'dark', mascot: '🦊', ttsLang: 'en', ttsProvider: 'web', celebrateImageEnabled: false, celebrateImageData: null };
     }
@@ -423,24 +547,228 @@
   function applyTheme() {
     const theme = (prefs && prefs.theme) || 'dark';
     const root = document.documentElement;
+    // Remove all theme classes
+    root.classList.remove('theme-light', 'theme-kids', 'theme-jungle', 'theme-matrix', 'theme-forest');
+    
+    // Remove existing jungle emojis
+    document.querySelectorAll('.jungle-emoji').forEach(el => el.remove());
+    
+    // Remove existing matrix canvas
+    const existingCanvas = document.getElementById('matrix-canvas');
+    if (existingCanvas) existingCanvas.remove();
+    
+    // Remove existing forest trees
+    document.querySelectorAll('.forest-tree').forEach(el => el.remove());
+    
+    // Apply the selected theme
     if (theme === 'light') {
       root.classList.add('theme-light');
-    } else {
-      root.classList.remove('theme-light');
+    } else if (theme === 'kids') {
+      root.classList.add('theme-kids');
+    } else if (theme === 'jungle') {
+      root.classList.add('theme-jungle');
+      createJungleEmojis();
+    } else if (theme === 'matrix') {
+      root.classList.add('theme-matrix');
+      createMatrixRain();
+    } else if (theme === 'forest') {
+      root.classList.add('theme-forest');
+      createForestTrees();
     }
+    // 'dark' is the default, no class needed
+  }
+  
+  function createJungleEmojis() {
+    // Animals (max 1 of each) and plants (can repeat)
+    const animals = ['🦜', '🐒', '🦎', '🦋', '🐍', '🦅', '🐆', '🦓', '🦍', '🐘', '🦏', '🐊', '🦛', '🐅', '🦒', '🐃', '🦌', '🦘', '🐫', '🦙'];
+    const plants = ['🌿', '🌴', '🌳', '🌺', '🌵', '🍃', '🌾'];
+    
+    // Build emoji list: 1 of each animal + many plants
+    const emojis = [...animals];
+    const plantsNeeded = 80 - animals.length;
+    for (let i = 0; i < plantsNeeded; i++) {
+      emojis.push(plants[Math.floor(Math.random() * plants.length)]);
+    }
+    
+    // Shuffle the array
+    for (let i = emojis.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [emojis[i], emojis[j]] = [emojis[j], emojis[i]];
+    }
+    
+    const count = emojis.length;
+    const positions = []; // Store positions to avoid overlap
+    const minDistance = 8; // Minimum distance between emojis (in %)
+    
+    for (let i = 0; i < count; i++) {
+      let top, left, size;
+      let attempts = 0;
+      let validPosition = false;
+      
+      // Try to find a non-overlapping position
+      while (!validPosition && attempts < 50) {
+        top = Math.random() * 100;
+        left = Math.random() * 100;
+        size = 30 + Math.random() * 60; // 30px to 90px (ratio 1:3)
+        
+        // Check if this position overlaps with existing emojis
+        validPosition = true;
+        for (const pos of positions) {
+          const distance = Math.sqrt(Math.pow(top - pos.top, 2) + Math.pow(left - pos.left, 2));
+          if (distance < minDistance) {
+            validPosition = false;
+            break;
+          }
+        }
+        attempts++;
+      }
+      
+      // If we found a valid position, create the emoji
+      if (validPosition) {
+        positions.push({ top, left, size });
+        
+        const emoji = document.createElement('div');
+        emoji.className = 'jungle-emoji';
+        emoji.textContent = emojis[i]; // Use emoji from shuffled array
+        
+        emoji.style.top = top + '%';
+        emoji.style.left = left + '%';
+        emoji.style.fontSize = size + 'px';
+        
+        // Random opacity
+        emoji.style.opacity = 0.25 + Math.random() * 0.25; // 0.25 to 0.5
+        
+        // Random animation
+        const animDuration = 15 + Math.random() * 15; // 15s to 30s
+        emoji.style.animation = `jungle-sway-${(i % 2) + 1} ${animDuration}s ease-in-out infinite`;
+        emoji.style.animationDelay = Math.random() * 5 + 's';
+        
+        document.body.appendChild(emoji);
+      }
+    }
+  }
+  
+  function createMatrixRain() {
+    const canvas = document.createElement('canvas');
+    canvas.id = 'matrix-canvas';
+    document.body.appendChild(canvas);
+    
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    
+    // Matrix characters
+    const chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const fontSize = 16;
+    const columns = Math.floor(canvas.width / fontSize);
+    const drops = Array(columns).fill(1);
+    
+    function draw() {
+      // Semi-transparent black to create trail effect
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      ctx.font = fontSize + 'px monospace';
+      
+      for (let i = 0; i < drops.length; i++) {
+        // Random character
+        const char = chars[Math.floor(Math.random() * chars.length)];
+        
+        // Gradient effect: brighter at the head
+        const y = drops[i] * fontSize;
+        const gradient = ctx.createLinearGradient(0, y - fontSize * 10, 0, y);
+        gradient.addColorStop(0, 'rgba(0, 255, 65, 0.1)');
+        gradient.addColorStop(0.5, 'rgba(0, 255, 65, 0.5)');
+        gradient.addColorStop(1, 'rgba(0, 255, 65, 1)');
+        
+        ctx.fillStyle = gradient;
+        ctx.fillText(char, i * fontSize, y);
+        
+        // Reset drop randomly
+        if (y > canvas.height && Math.random() > 0.975) {
+          drops[i] = 0;
+        }
+        drops[i]++;
+      }
+    }
+    
+    // Animation loop
+    const interval = setInterval(() => {
+      if (!document.getElementById('matrix-canvas')) {
+        clearInterval(interval);
+        return;
+      }
+      draw();
+    }, 50);
+    
+    // Resize handler
+    window.addEventListener('resize', () => {
+      if (document.getElementById('matrix-canvas')) {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+    });
+  }
+  
+  function createForestTrees() {
+    const treeTypes = ['🌲', '🌳', '🌴', '🌳']; // Baobabs represented by 🌳
+    const count = 25; // Number of trees
+    
+    for (let i = 0; i < count; i++) {
+      const tree = document.createElement('div');
+      tree.className = 'forest-tree';
+      tree.textContent = treeTypes[Math.floor(Math.random() * treeTypes.length)];
+      
+      // Random horizontal position
+      tree.style.left = (i * (100 / count)) + Math.random() * (100 / count) + '%';
+      
+      // Random size
+      const size = 60 + Math.random() * 80; // 60px to 140px
+      tree.style.fontSize = size + 'px';
+      
+      // Stagger the animation start
+      tree.style.animationDelay = (Math.random() * 3) + 's';
+      
+      // Random animation duration for variety
+      tree.style.animationDuration = (6 + Math.random() * 4) + 's';
+      
+      document.body.appendChild(tree);
+    }
+    
+    // Add some birds flying
+    setTimeout(() => {
+      for (let i = 0; i < 5; i++) {
+        const bird = document.createElement('div');
+        bird.className = 'forest-tree';
+        bird.textContent = '🦅';
+        bird.style.left = Math.random() * 100 + '%';
+        bird.style.bottom = (60 + Math.random() * 30) + '%';
+        bird.style.fontSize = '30px';
+        bird.style.animation = 'none';
+        bird.style.opacity = '0.6';
+        document.body.appendChild(bird);
+      }
+    }, 2000);
   }
 
   function savePrefs() {
     try {
       localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
     } catch (e) {}
-    // Also push to server if available
+    // Also push to server if available - save for authenticated user
     try {
-      if (window.api && typeof window.api.setPrefs === 'function' && prefs && prefs.selectedUserId) {
-        // Fire and forget
-        window.api.setPrefs(prefs.selectedUserId, prefs).catch(() => {});
+      if (window.api && typeof window.api.setPrefs === 'function' && window.authUser && window.authUser.id) {
+        // Fire and forget - save prefs for the authenticated user
+        console.log('[savePrefs] Saving prefs for authenticated user:', window.authUser.id, prefs);
+        window.api.setPrefs(window.authUser.id, prefs).catch((err) => {
+          console.error('[savePrefs] Failed to save prefs:', err);
+        });
+      } else {
+        console.log('[savePrefs] Not saving to server - authUser:', window.authUser);
       }
-    } catch {}
+    } catch (e) {
+      console.error('[savePrefs] Error:', e);
+    }
   }
 
   function loadUsers() {
@@ -461,11 +789,14 @@
   // ---- Server users sync (SQLite via API) ----
   async function syncPrefsFromServer(userId) {
     if (!userId || !window.api || !window.api.getPrefs) return;
+    console.log('[syncPrefsFromServer] Loading prefs for user:', userId);
     try {
       const serverPrefs = await window.api.getPrefs(userId);
+      console.log('[syncPrefsFromServer] Server prefs:', serverPrefs);
       if (serverPrefs && typeof serverPrefs === 'object') {
         // Merge server prefs into local, but ensure selectedUserId is consistent
         prefs = { ...prefs, ...serverPrefs, selectedUserId: userId };
+        console.log('[syncPrefsFromServer] Merged prefs:', prefs);
         savePrefs();
         // Re-apply UI-affecting prefs
         applyTheme();
@@ -474,6 +805,7 @@
         applyCelebrateImagePreview();
       } else {
         // No prefs on server yet: seed with local prefs
+        console.log('[syncPrefsFromServer] No server prefs, seeding with local:', prefs);
         await window.api.setPrefs(userId, prefs);
       }
     } catch (err) {
@@ -485,7 +817,13 @@
     try {
       const list = await window.api.getUsers();
       // Map server fields to client format (created_at seconds -> ms)
-      users = (list || []).map(u => ({ id: u.id, name: u.name, createdAt: (u.created_at ? u.created_at * 1000 : Date.now()) }));
+      // Each user now has their own selectedDeckId
+      users = (list || []).map(u => ({ 
+        id: u.id, 
+        name: u.name, 
+        createdAt: (u.created_at ? u.created_at * 1000 : Date.now()),
+        selectedDeckId: u.selectedDeckId || null
+      }));
       saveUsers();
       // Ensure selected user is valid
       if (!prefs.selectedUserId || !users.some(u => u.id === prefs.selectedUserId)) {
@@ -566,90 +904,92 @@
 
   function renderDecks() {
     deckSelect.innerHTML = '';
+    const selectedDeckId = getSelectedDeckId();
     for (const d of decks) {
       const opt = document.createElement('option');
       opt.value = d.id;
       opt.textContent = d.name;
-      if (d.id === prefs.selectedDeckId) opt.selected = true;
+      if (d.id === selectedDeckId) opt.selected = true;
       deckSelect.appendChild(opt);
     }
   }
 
+  // User dropdown removed - authentication manages the active user
   function renderUsers() {
-    if (!userSelect) return;
-    userSelect.innerHTML = '';
-    for (const u of users) {
-      const opt = document.createElement('option');
-      opt.value = u.id;
-      opt.textContent = u.name;
-      if (u.id === prefs.selectedUserId) opt.selected = true;
-      userSelect.appendChild(opt);
-    }
+    // No longer needed - user selection removed from UI
   }
 
+  // User list rendering moved to admin page
   function renderUsersList() {
-    if (!usersListEl) return;
-    usersListEl.innerHTML = '';
-    // compute history counts per user for current deck overall or all decks? Use all decks for delete guard consistency
-    const counts = {};
-    for (const h of history) {
-      counts[h.userId] = (counts[h.userId] || 0) + 1;
-    }
-    const ul = usersListEl;
-    for (const u of users) {
-      const li = document.createElement('li');
-      li.dataset.userId = u.id;
-      li.style.display = 'grid';
-      li.style.gridTemplateColumns = '1fr auto auto auto';
-      li.style.alignItems = 'center';
-      const nameSpan = document.createElement('span');
-      nameSpan.textContent = u.name;
-      const histBadge = document.createElement('span');
-      const c = counts[u.id] || 0;
-      histBadge.className = 'badge';
-      histBadge.textContent = `historique: ${c}`;
-      const activeBadge = document.createElement('span');
-      activeBadge.className = 'badge';
-      activeBadge.textContent = (u.id === prefs.selectedUserId) ? 'actif' : '';
-      if (u.id !== prefs.selectedUserId) activeBadge.style.visibility = 'hidden';
-      const deletableBadge = document.createElement('span');
-      const deletable = (c === 0) && users.length > 1;
-      deletableBadge.className = 'badge deletable';
-      if (deletable) {
-        deletableBadge.textContent = 'supprimable';
-        deletableBadge.style.visibility = 'visible';
-      } else {
-        deletableBadge.textContent = '';
-        deletableBadge.style.visibility = 'hidden';
-      }
-      li.appendChild(nameSpan);
-      li.appendChild(histBadge);
-      li.appendChild(activeBadge);
-      li.appendChild(deletableBadge);
-      ul.appendChild(li);
-    }
+    // No longer needed - user management is in admin page
   }
 
   function applyUserBadge() {
-    const u = users.find(x => x.id === prefs.selectedUserId);
-    if (userBadge) userBadge.textContent = u ? u.name : '—';
-    if (currentUserNameTop) currentUserNameTop.textContent = u ? u.name : '—';
+    if (userBadge) {
+      // Show robot emoji when not logged in (selectedUserId = 'default')
+      if (!window.authUser || prefs.selectedUserId === 'default') {
+        userBadge.textContent = '🤖';
+      } else {
+        const u = users.find(x => x.id === prefs.selectedUserId);
+        userBadge.textContent = u ? u.name : '—';
+      }
+    }
+  }
+
+  // Get the selected deck ID for the current user
+  function getSelectedDeckId() {
+    // If using default (not authenticated), use prefs.selectedDeckId
+    if (prefs.selectedUserId === 'default') {
+      return prefs.selectedDeckId || null;
+    }
+    // Otherwise, use the user's selected deck
+    const currentUser = users.find(u => u.id === prefs.selectedUserId);
+    return currentUser?.selectedDeckId || prefs.selectedDeckId || null;
+  }
+
+  // Set the selected deck ID for the current user
+  function setSelectedDeckId(deckId) {
+    // If using default (not authenticated), save to prefs only
+    if (prefs.selectedUserId === 'default') {
+      prefs.selectedDeckId = deckId;
+      savePrefs();
+      return;
+    }
+    // Otherwise, save to user's selectedDeckId
+    const currentUser = users.find(u => u.id === prefs.selectedUserId);
+    if (currentUser) {
+      currentUser.selectedDeckId = deckId;
+      saveUsers();
+    }
+    // Keep prefs.selectedDeckId for backward compatibility
+    prefs.selectedDeckId = deckId;
+    savePrefs();
   }
 
   function getCurrentDeckWords() {
-    return words.filter(w => w.deckId === prefs.selectedDeckId);
+    const selectedDeckId = getSelectedDeckId();
+    console.log('[getCurrentDeckWords] Filtering words. selectedDeckId:', selectedDeckId);
+    words.forEach((w, i) => {
+      console.log(`  Word ${i}: fr="${w.fr}", deckId="${w.deckId}", match=${w.deckId === selectedDeckId}`);
+    });
+    const filtered = words.filter(w => w.deckId === selectedDeckId);
+    console.log('[getCurrentDeckWords] Filtered words:', filtered.length);
+    return filtered;
   }
 
   function initUsersAndPrefs() {
+    // When not authenticated, use 'default' as selectedUserId
+    // When authenticated, selectedUserId will be set by refreshAuthUI
+    if (!prefs.selectedUserId) {
+      prefs.selectedUserId = 'default';
+      savePrefs();
+    }
+    
+    // Ensure users list is not empty (for backward compatibility)
     if (!users || users.length === 0) {
-      const def = { id: uid(), name: 'Alex', createdAt: Date.now() };
+      const def = { id: uid(), name: 'Guest', createdAt: Date.now() };
       users = [def];
       saveUsers();
-      prefs.selectedUserId = def.id;
-      savePrefs();
-    } else if (!prefs.selectedUserId) {
-      prefs.selectedUserId = users[0].id;
-      savePrefs();
     }
   }
 
@@ -687,7 +1027,8 @@
   }
 
   function getCurrentDeckHistory() {
-    return history.filter(h => h.deckId === prefs.selectedDeckId);
+    const selectedDeckId = getSelectedDeckId();
+    return history.filter(h => h.deckId === selectedDeckId);
   }
 
   function uid() {
@@ -721,9 +1062,11 @@
 
   function renderWords() {
     const deckWords = getCurrentDeckWords();
+    console.log('[renderWords] selectedDeckId:', prefs.selectedDeckId, 'deckWords count:', deckWords.length, 'total words:', words.length);
     wordsList.innerHTML = '';
     if (!deckWords.length) {
       wordsEmpty.style.display = 'block';
+      console.log('[renderWords] No words for this deck');
       return;
     }
     wordsEmpty.style.display = 'none';
@@ -860,7 +1203,6 @@
     manageTab.classList.toggle('active', tabName === 'manage');
     reviewTab.classList.toggle('active', tabName === 'review');
     if (prefsTab) prefsTab.classList.toggle('active', tabName === 'prefs');
-    if (usersTab) usersTab.classList.toggle('active', tabName === 'users');
     if (statsTab) statsTab.classList.toggle('active', tabName === 'stats');
 
     // Update nav tab button active state (only those inside nav.tabs)
@@ -871,11 +1213,6 @@
     // On-demand renders for certain tabs
     if (tabName === 'manage') {
       renderWords();
-    } else if (tabName === 'users') {
-      renderUsers();
-      applyUserBadge();
-      renderUsersList();
-      updateUserTabState();
     } else if (tabName === 'stats') {
       // Ensure server history is up to date before rendering
       fetchHistoryFromServer().then(() => {
@@ -902,24 +1239,8 @@
     headerPrefsBtn.addEventListener('click', () => switchTab('prefs'));
   }
 
-  // Click on user badge in header opens Users tab
-  if (userBadge) {
-    userBadge.style.cursor = 'pointer';
-    userBadge.title = 'Gérer les utilisateurs';
-    userBadge.addEventListener('click', () => switchTab('users'));
-  }
 
-  // Users button at top of Users section
-  const gotoUsersBtn = document.getElementById('gotoUsersBtn');
-  if (gotoUsersBtn) {
-    gotoUsersBtn.addEventListener('click', () => switchTab('users'));
-  }
 
-  // Header Users button next to user badge
-  const gotoUsersHeaderBtn = document.getElementById('gotoUsersHeaderBtn');
-  if (gotoUsersHeaderBtn) {
-    gotoUsersHeaderBtn.addEventListener('click', () => switchTab('users'));
-  }
 
   // Gear button label: show emoji by default; show text on window blur/hidden
   function setGearLabelFocused(isFocused) {
@@ -1498,14 +1819,27 @@
 
   // Deck select handlers
   deckSelect.addEventListener('change', async () => {
-    prefs.selectedDeckId = deckSelect.value;
-    savePrefs();
-    await fetchWordsForSelectedDeck();
-    await fetchHistoryFromServer();
-    renderHistory();
-    renderStatsChart();
-    renderUsersList();
-    updateUserTabState();
+    setSelectedDeckId(deckSelect.value);
+    try {
+      await refreshAuthUI();
+      await fetchDecksFromServer();
+      await fetchWordsForSelectedDeck();
+      if (window.authUser) {
+        await fetchHistoryFromServer();
+        renderStatsChart();
+      }
+      renderHistory();
+      renderUsersList();
+      updateUserTabState();
+      // Reflect deck privacy in checkbox
+      if (deckPrivacyCheckbox) {
+        const cur = decks.find(d => d.id === prefs.selectedDeckId);
+        deckPrivacyCheckbox.checked = cur ? !cur.isPublic : false;
+      }
+    } catch (e) {
+      console.error(e);
+      deckPrivacyCheckbox.checked = cur ? !cur.isPublic : false;
+    }
   });
 
   // Create new deck (vocab)
@@ -1559,8 +1893,7 @@
         const result = await window.api.copyDeck(currentDeck.id, clean);
         await fetchDecksFromServer();
         if (result && result.id) {
-          prefs.selectedDeckId = result.id;
-          savePrefs();
+          setSelectedDeckId(result.id);
           renderDecks();
           await fetchWordsForSelectedDeck();
           showToast('Vocabulaire copié', 'success');
@@ -1578,72 +1911,7 @@
     });
   }
 
-  // User select handler (switch active user)
-  userSelect.addEventListener('change', () => {
-    prefs.selectedUserId = userSelect.value;
-    savePrefs();
-    applyUserBadge();
-    renderUsersList();
-    renderWords();
-    refreshReviewAvailability();
-    syncPrefsFromServer(prefs.selectedUserId);
-  });
-
-  // Supprimer l'utilisateur actif si et seulement si il n'a pas d'historique
-  if (deleteUserBtn) {
-    deleteUserBtn.addEventListener('click', async () => {
-      if (!prefs.selectedUserId) return;
-      if (users.length <= 1) { alert('Impossible de supprimer le dernier utilisateur.'); return; }
-      const u = users.find(x => x.id === prefs.selectedUserId);
-      const hasHistory = history.some(h => h.userId === prefs.selectedUserId);
-      if (hasHistory) { alert('Cet utilisateur a de l\'historique et ne peut pas être supprimé.'); return; }
-      if (!confirm(`Supprimer l'utilisateur "${u ? u.name : ''}" ?`)) return;
-      try {
-        await window.api.deleteUser(prefs.selectedUserId);
-        await fetchUsersFromServer();
-        // Select first available user if current was deleted
-        if (!users.some(x => x.id === prefs.selectedUserId) && users[0]) {
-          prefs.selectedUserId = users[0].id;
-          savePrefs();
-        }
-        // Refresh dependent areas
-        renderWords();
-        refreshReviewAvailability();
-        renderHistory();
-        showToast('Utilisateur supprimé', 'success');
-      } catch (e) {
-        alert('Erreur lors de la suppression: ' + (e.message || e));
-      }
-    });
-  }
-
-  if (newUserBtn) {
-    newUserBtn.addEventListener('click', async () => {
-      const name = prompt('Nom du nouvel utilisateur');
-      if (!name) return;
-      const clean = name.trim();
-      if (!clean) return;
-      // Prevent duplicate locally (fast UX), server also enforces
-      const exists = users.some(u => u.name.trim().toLowerCase() === clean.toLowerCase());
-      if (exists) { alert('Ce nom d\'utilisateur existe déjà.'); return; }
-      try {
-        const created = await window.api.createUser(clean);
-        prefs.selectedUserId = created.id;
-        savePrefs();
-        await fetchUsersFromServer();
-        await syncPrefsFromServer(created.id);
-        // Highlight the newly added user in list
-        const li = usersListEl && usersListEl.querySelector(`li[data-user-id="${created.id}"]`);
-        if (li) {
-          li.classList.add('highlight');
-          setTimeout(() => li.classList.remove('highlight'), 1200);
-        }
-        showToast('Utilisateur créé', 'success');
-      } catch (e) {
-        alert('Erreur lors de la création: ' + (e.message || e));
-      }
-    });
-  }
+  // User selection removed - authentication manages the active user
 
   // Preferences wiring
   if (fireworksCheckbox) {
@@ -1724,9 +1992,12 @@
   renderUsersList();
   updateUserTabState();
 
-  // Initial server sync for users (overrides local users), then load prefs for active user
-  fetchUsersFromServer().then(() => {
-    if (prefs && prefs.selectedUserId) syncPrefsFromServer(prefs.selectedUserId);
+  // Initial server sync for users (overrides local users), then check auth and load prefs
+  fetchUsersFromServer().then(async () => {
+    // Check auth after users are loaded so we can sync the selected user and load their prefs
+    await refreshAuthUI();
+    // Prefs are now loaded in refreshAuthUI for authenticated user
+    // No need to load prefs for selectedUserId separately
   });
 
   // Initial server sync for decks, words, and history

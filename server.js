@@ -68,6 +68,42 @@ CREATE TABLE IF NOT EXISTS reviews (
 );
 `);
 
+// Migration: add is_public column to decks if missing (default public)
+try {
+  const cols = db.prepare("PRAGMA table_info('decks')").all();
+  const hasIsPublic = cols.some(c => String(c.name) === 'is_public');
+  if (!hasIsPublic) {
+    db.exec("ALTER TABLE decks ADD COLUMN is_public INTEGER NOT NULL DEFAULT 1");
+    db.exec("UPDATE decks SET is_public = 1 WHERE is_public IS NULL");
+  }
+} catch (e) { console.warn('Deck privacy migration failed:', e.message); }
+
+// Migration: add owner_user_id to decks to support private ownership
+try {
+  const dcols = db.prepare("PRAGMA table_info('decks')").all();
+  const hasOwner = dcols.some(c => String(c.name) === 'owner_user_id');
+  if (!hasOwner) {
+    db.exec("ALTER TABLE decks ADD COLUMN owner_user_id TEXT NULL");
+  }
+} catch (e) { console.warn('Deck owner migration failed:', e.message); }
+
+// Migration: add authentication/admin fields to users if missing
+try {
+  const ucols = db.prepare("PRAGMA table_info('users')").all();
+  const hasUser = ucols.some(c => String(c.name) === 'user');
+  const hasPassword = ucols.some(c => String(c.name) === 'password');
+  const hasIsAdmin = ucols.some(c => String(c.name) === 'is_admin');
+  if (!hasUser) {
+    db.exec("ALTER TABLE users ADD COLUMN user TEXT");
+  }
+  if (!hasPassword) {
+    db.exec("ALTER TABLE users ADD COLUMN password TEXT");
+  }
+  if (!hasIsAdmin) {
+    db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+  }
+} catch (e) { console.warn('Users auth/admin migration failed:', e.message); }
+
 const getKvStmt = db.prepare('SELECT value FROM kv WHERE key = ?');
 const putKvStmt = db.prepare(`
   INSERT INTO kv (key, value, updated_at)
@@ -77,10 +113,12 @@ const putKvStmt = db.prepare(`
 const listKvStmt = db.prepare('SELECT key, updated_at FROM kv ORDER BY key');
 const delKvStmt = db.prepare('DELETE FROM kv WHERE key = ?');
 // Users prepared statements
-const listUsersStmt = db.prepare('SELECT id, name, created_at FROM users ORDER BY created_at ASC');
+const listUsersStmt = db.prepare('SELECT id, name, created_at, user, is_admin FROM users ORDER BY created_at ASC');
 const getUserByNameStmt = db.prepare('SELECT id FROM users WHERE lower(trim(name)) = lower(trim(?))');
-const insertUserStmt = db.prepare('INSERT INTO users (id, name, created_at) VALUES (@id, @name, @created_at)');
+const insertUserStmt = db.prepare('INSERT INTO users (id, name, created_at, user, password, is_admin) VALUES (@id, @name, @created_at, @user, @password, @is_admin)');
 const deleteUserStmt = db.prepare('DELETE FROM users WHERE id = ?');
+const getUserByIdStmt = db.prepare('SELECT id, name, created_at, user, password, is_admin FROM users WHERE id = ?');
+const updateUserAllStmt = db.prepare('UPDATE users SET name = @name, user = @user, password = @password, is_admin = @is_admin WHERE id = @id');
 // User prefs prepared statements
 const getPrefsStmt = db.prepare('SELECT data FROM user_prefs WHERE user_id = ?');
 const upsertPrefsStmt = db.prepare(`
@@ -89,10 +127,13 @@ const upsertPrefsStmt = db.prepare(`
   ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
 `);
 // Decks prepared statements
-const listDecksStmt = db.prepare('SELECT id, name, created_at FROM decks ORDER BY created_at ASC');
+const listPublicDecksStmt = db.prepare('SELECT id, name, created_at, COALESCE(is_public,1) as is_public, owner_user_id FROM decks WHERE COALESCE(is_public,1)=1 ORDER BY created_at ASC');
+const listDecksForUserStmt = db.prepare('SELECT id, name, created_at, COALESCE(is_public,1) as is_public, owner_user_id FROM decks WHERE COALESCE(is_public,1)=1 OR owner_user_id = ? ORDER BY created_at ASC');
 const getDeckByNameStmt = db.prepare('SELECT id FROM decks WHERE lower(trim(name)) = lower(trim(?))');
-const insertDeckStmt = db.prepare('INSERT INTO decks (id, name, created_at) VALUES (@id, @name, @created_at)');
+const insertDeckStmt = db.prepare('INSERT INTO decks (id, name, created_at, is_public, owner_user_id) VALUES (@id, @name, @created_at, @is_public, @owner_user_id)');
 const deleteDeckStmt = db.prepare('DELETE FROM decks WHERE id = ?');
+const getDeckByIdStmt = db.prepare('SELECT id, name, created_at, COALESCE(is_public,1) as is_public, owner_user_id FROM decks WHERE id = ?');
+const updateDeckPrivacyStmt = db.prepare('UPDATE decks SET is_public = @is_public WHERE id = @id');
 // Words prepared statements
 const listWordsByDeckStmt = db.prepare('SELECT id, fr, en, errors, errors_by_user, created_at FROM words WHERE deck_id = ? ORDER BY created_at ASC');
 const insertWordStmt = db.prepare('INSERT INTO words (id, deck_id, fr, en, errors, errors_by_user, created_at) VALUES (@id, @deck_id, @fr, @en, @errors, @errors_by_user, @created_at)');
@@ -108,6 +149,26 @@ const clearReviewsByDeckStmt = db.prepare('DELETE FROM reviews WHERE deck_id = ?
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 
+// --- Minimal cookie parsing middleware ---
+app.use((req, _res, next) => {
+  req.cookies = {};
+  const raw = req.headers?.cookie || '';
+  raw.split(';').forEach(p => {
+    const i = p.indexOf('=');
+    if (i > -1) {
+      const k = decodeURIComponent(p.slice(0, i).trim());
+      const v = decodeURIComponent(p.slice(i + 1).trim());
+      req.cookies[k] = v;
+    }
+  });
+  next();
+});
+
+function getAuthUserId(req) {
+  const uid = req.cookies?.uid;
+  return uid && typeof uid === 'string' && uid.startsWith('u_') ? uid : null;
+}
+
 // Health
 app.get('/api/health', (req, res) => {
   try {
@@ -117,6 +178,94 @@ app.get('/api/health', (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+// Auth: POST /api/login body: { user, password }
+app.post('/api/login', (req, res) => {
+  try {
+    const login = String(req.body?.user || '').trim();
+    const pwd = String(req.body?.password || '').trim();
+    if (!login || !pwd) return res.status(400).json({ error: 'user_password_required' });
+    const row = db.prepare('SELECT id, name, user, is_admin FROM users WHERE user = ? AND password = ?').get(login, pwd);
+    if (!row) return res.status(401).json({ error: 'invalid_credentials' });
+    // Set a simple cookie with user id (demo purposes only)
+    const cookieVal = `uid=${encodeURIComponent(row.id)}; Path=/; SameSite=Lax; Max-Age=86400`;
+    console.log('[Auth] login ok for', row.user || row.name, '-> set-cookie:', cookieVal);
+    res.setHeader('Set-Cookie', cookieVal);
+    res.json({ ok: true, user: { id: row.id, name: row.name, user: row.user, is_admin: row.is_admin } });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Auth: POST /api/logout
+app.post('/api/logout', (req, res) => {
+  try {
+    res.setHeader('Set-Cookie', 'uid=; Path=/; Max-Age=0; SameSite=Lax');
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/me -> current logged user or null
+app.get('/api/me', (req, res) => {
+  try {
+    const rawCookie = req.headers?.cookie || '';
+    const uid = getAuthUserId(req);
+    console.log('[Auth] /api/me cookies:', rawCookie, '-> uid:', uid || 'null');
+    if (!uid) return res.json({ user: null });
+    const row = db.prepare('SELECT id, name, user, is_admin FROM users WHERE id = ?').get(uid);
+    if (!row) return res.json({ user: null });
+    res.json({ user: row });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/decks/:id/privacy  body: { isPublic: boolean }
+app.put('/api/decks/:id/privacy', (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const isPublic = !!req.body?.isPublic;
+    // If making private and no owner, attach to current user
+    if (!isPublic) {
+      const deck = getDeckByIdStmt.get(id);
+      if (!deck) return res.status(404).json({ error: 'not_found' });
+      if (!deck.owner_user_id) {
+        const uid = getAuthUserId(req);
+        if (uid) {
+          db.prepare('UPDATE decks SET owner_user_id = ? WHERE id = ?').run(uid, id);
+        }
+      }
+    }
+    const info = updateDeckPrivacyStmt.run({ id, is_public: isPublic ? 1 : 0 });
+    if (info.changes === 0) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true, id, is_public: isPublic ? 1 : 0 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /api/decks/:id/owner  body: { ownerId: string | null }
+app.put('/api/decks/:id/owner', (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const ownerId = req.body?.ownerId ? String(req.body.ownerId) : null;
+    const deck = getDeckByIdStmt.get(id);
+    if (!deck) return res.status(404).json({ error: 'not_found' });
+    // Verify owner exists if provided
+    if (ownerId) {
+      const owner = db.prepare('SELECT id FROM users WHERE id = ?').get(ownerId);
+      if (!owner) return res.status(400).json({ error: 'owner_not_found' });
+    }
+    const info = db.prepare('UPDATE decks SET owner_user_id = ? WHERE id = ?').run(ownerId, id);
+    if (info.changes === 0) return res.status(404).json({ error: 'not_found' });
+    res.json({ ok: true, id, owner_user_id: ownerId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // PUT /api/words/:id  body: { fr, en: [] }
 app.put('/api/words/:id', (req, res) => {
   try {
@@ -223,7 +372,7 @@ function ensureDefaultDeck() {
   const count = db.prepare('SELECT COUNT(*) as c FROM decks').get().c;
   if (count === 0) {
     const id = 'd_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    insertDeckStmt.run({ id, name: 'Vocab par défaut', created_at: Math.floor(Date.now()/1000) });
+    insertDeckStmt.run({ id, name: 'Vocab par défaut', created_at: Math.floor(Date.now()/1000), is_public: 1, owner_user_id: null });
   }
 }
 ensureDefaultDeck();
@@ -298,7 +447,10 @@ app.post('/api/users', (req, res) => {
     if (exists) return res.status(409).json({ error: 'name_exists' });
     const id = 'u_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
     const created_at = Math.floor(Date.now()/1000);
-    insertUserStmt.run({ id, name, created_at });
+    const userLogin = req.body?.user ? String(req.body.user) : null;
+    const password = req.body?.password ? String(req.body.password) : null; // NOTE: store hashed in production
+    const is_admin = req.body?.isAdmin ? 1 : 0;
+    insertUserStmt.run({ id, name, created_at, user: userLogin, password, is_admin });
     // seed default prefs for this user
     const defaultPrefs = {
       shuffle: true,
@@ -311,7 +463,7 @@ app.post('/api/users', (req, res) => {
       selectedUserId: id
     };
     upsertPrefsStmt.run({ user_id: id, data: JSON.stringify(defaultPrefs) });
-    res.status(201).json({ id, name, created_at });
+    res.status(201).json({ id, name, created_at, user: userLogin, is_admin });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -328,15 +480,37 @@ app.delete('/api/users/:id', (req, res) => {
   }
 });
 
+// PUT /api/users/:id  body: { name?, user?, password?, isAdmin? }
+app.put('/api/users/:id', (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const cur = getUserByIdStmt.get(id);
+    if (!cur) return res.status(404).json({ error: 'not_found' });
+    const name = (req.body?.name !== undefined) ? String(req.body.name) : cur.name;
+    const userLogin = (req.body?.user !== undefined) ? (req.body.user ? String(req.body.user) : null) : cur.user;
+    const password = (req.body?.password !== undefined) ? (req.body.password ? String(req.body.password) : null) : cur.password;
+    const is_admin = (req.body?.isAdmin !== undefined) ? (req.body.isAdmin ? 1 : 0) : cur.is_admin;
+    updateUserAllStmt.run({ id, name, user: userLogin, password, is_admin });
+    res.json({ ok: true, id, name, user: userLogin, is_admin });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // User preferences API
 // GET /api/users/:id/prefs -> { userId, prefs }
 app.get('/api/users/:id/prefs', (req, res) => {
   try {
     const id = String(req.params.id);
+    console.log('[Prefs] GET /api/users/:id/prefs - userId:', id);
     const row = getPrefsStmt.get(id);
-    if (!row) return res.status(404).json({ error: 'not_found' });
+    if (!row) {
+      console.log('[Prefs] No prefs found for user:', id);
+      return res.status(404).json({ error: 'not_found' });
+    }
     let prefs;
     try { prefs = JSON.parse(row.data); } catch { prefs = {}; }
+    console.log('[Prefs] Returning prefs for user:', id, '- mascot:', prefs.mascot);
     res.json({ userId: id, prefs });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -348,8 +522,10 @@ app.put('/api/users/:id/prefs', (req, res) => {
   try {
     const id = String(req.params.id);
     const prefs = req.body?.prefs ?? {};
+    console.log('[Prefs] PUT /api/users/:id/prefs - userId:', id, '- mascot:', prefs.mascot);
     const payload = typeof prefs === 'string' ? prefs : JSON.stringify(prefs);
     upsertPrefsStmt.run({ user_id: id, data: payload });
+    console.log('[Prefs] Prefs saved successfully for user:', id);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -357,10 +533,11 @@ app.put('/api/users/:id/prefs', (req, res) => {
 });
 
 // Decks API
-// GET /api/decks -> { items: [{ id, name, created_at }] }
+// GET /api/decks -> filters by auth: public OR owned by current user
 app.get('/api/decks', (req, res) => {
   try {
-    const rows = listDecksStmt.all();
+    const uid = getAuthUserId(req);
+    const rows = uid ? listDecksForUserStmt.all(uid) : listPublicDecksStmt.all();
     res.json({ items: rows });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -375,8 +552,9 @@ app.post('/api/decks', (req, res) => {
     const exists = getDeckByNameStmt.get(name);
     if (exists) return res.status(409).json({ error: 'name_exists' });
     const id = 'd_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    insertDeckStmt.run({ id, name, created_at: Math.floor(Date.now()/1000) });
-    res.status(201).json({ id, name });
+    const owner_user_id = getAuthUserId(req);
+    insertDeckStmt.run({ id, name, created_at: Math.floor(Date.now()/1000), is_public: 1, owner_user_id });
+    res.status(201).json({ id, name, is_public: 1, owner_user_id });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -398,7 +576,10 @@ app.post('/api/decks/:id/copy', (req, res) => {
 
     const tx = db.transaction(() => {
       // Create new deck
-      insertDeckStmt.run({ id: newDeckId, name, created_at: nowSec });
+      const src = getDeckByIdStmt.get(sourceId);
+      const srcPublic = src ? (src.is_public ? 1 : 0) : 1;
+      const owner_user_id = getAuthUserId(req) || (src ? src.owner_user_id : null);
+      insertDeckStmt.run({ id: newDeckId, name, created_at: nowSec, is_public: srcPublic, owner_user_id });
       // Copy words
       const words = listWordsByDeckStmt.all(sourceId);
       for (const w of words) {
@@ -417,7 +598,7 @@ app.post('/api/decks/:id/copy', (req, res) => {
     });
 
     const result = tx();
-    res.status(201).json({ id: newDeckId, name, copied: result.copied });
+    res.status(201).json({ id: newDeckId, name, copied: result.copied, is_public: getDeckByIdStmt.get(newDeckId)?.is_public ?? 1 });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -564,9 +745,35 @@ app.post('/api/tts', (req, res) => {
 // Serve static files (frontend) from project root
 app.use(express.static(__dirname));
 
+// GET /api/admin/decks -> ALL decks for admins only
+app.get('/api/admin/decks', (req, res) => {
+  try {
+    // Check if user is admin
+    const uid = getAuthUserId(req);
+    if (!uid) return res.status(401).json({ error: 'not_authenticated' });
+    
+    const userRow = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(uid);
+    if (!userRow || userRow.is_admin !== 1) {
+      return res.status(403).json({ error: 'admin_required' });
+    }
+    
+    // Return ALL decks for admin
+    const allDecksStmt = db.prepare('SELECT id, name, created_at, COALESCE(is_public,1) as is_public, owner_user_id FROM decks ORDER BY created_at ASC');
+    const rows = allDecksStmt.all();
+    res.json({ items: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Admin page
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
+// Login page
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'login.html'));
 });
 
 // Fallback to index.html for root

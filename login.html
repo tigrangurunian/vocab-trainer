@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login - Brain Sport</title>
+  <style>
+    :root { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; }
+    body { margin: 0; min-height: 100vh; display:flex; align-items:center; justify-content:center; background:#0b1020; color:#e6e9f2; }
+    .card { width: 360px; background:#0f162f; border:1px solid #2a3863; border-radius:12px; padding:18px; box-shadow: 0 10px 30px rgba(0,0,0,0.25); }
+    h1 { margin:0 0 6px 0; font-size: 20px; }
+    p.muted { margin:0 0 16px 0; color:#9aa4c4; font-size: 13px; }
+    label { display:block; margin: 10px 0 4px; font-weight: 600; }
+    input { width:100%; background:#101733; color:#e6e9f2; border:1px solid #31406d; border-radius:8px; padding:10px; }
+    button { width:100%; margin-top:12px; cursor:pointer; background:#1f2a4d; color:#e6e9f2; border:1px solid #31406d; padding:10px; border-radius:8px; font-weight:600; }
+    button:hover { background:#273360; }
+    .error { color:#fca5a5; font-size: 13px; min-height: 18px; margin-top: 6px; }
+    .row { display:flex; justify-content:space-between; margin-top:12px; }
+    a { color:#93c5fd; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Connexion</h1>
+    <p class="muted">Accédez à vos vocabulaires privés et statistiques</p>
+    <label for="user">Login</label>
+    <input id="user" type="text" autocomplete="username" />
+    <label for="password">Mot de passe</label>
+    <input id="password" type="password" autocomplete="current-password" />
+    <button id="loginBtn">Se connecter</button>
+    <div id="err" class="error"></div>
+    <div class="row">
+      <a href="/">← Retour</a>
+    </div>
+  </div>
+  <script>
+    const $ = s => document.querySelector(s);
+    const err = $('#err');
+    const btn = $('#loginBtn');
+    btn.addEventListener('click', async () => {
+      err.textContent = '';
+      const user = $('#user').value.trim();
+      const password = $('#password').value.trim();
+      if (!user || !password) { err.textContent = 'Login et mot de passe requis'; return; }
+      btn.disabled = true; btn.textContent = 'Connexion...';
+      try {
+        const res = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, credentials: 'same-origin', body: JSON.stringify({ user, password }) });
+        const data = await res.json().catch(()=>({}));
+        if (!res.ok) { err.textContent = data.error || 'Connexion échouée'; btn.disabled = false; btn.textContent = 'Se connecter'; return; }
+        // On success, cookie is set by server. Redirect home.
+        location.href = '/';
+      } catch (e) {
+        err.textContent = e.message || 'Erreur réseau';
+        btn.disabled = false; btn.textContent = 'Se connecter';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -11,9 +11,15 @@
 </head>
 <body>
   <header class="app-header">
-    <h1><span class="mascot" aria-hidden="true" title="Mascotte">🤖</span> Brain Sport</h1>
+    <h1>
+      <span class="mascot" aria-hidden="true" title="Mascotte">🤖</span> Brain Sport
+    </h1>
     <p>Apprends le vocabulaire Français → Anglais</p>
     <div class="header-actions">
+      <a id="loginLink" href="/login" class="tab-button" title="Se connecter">Login</a>
+      <span id="authStatus" class="badge user-badge" style="margin-left:8px;">Logged: false</span>
+      <span id="authUserLabel" class="badge user-badge" style="display:none; margin-right:8px;"></span>
+      <button id="logoutBtn" class="tab-button" style="display:none;">Logout</button>
       <span id="userBadge" class="badge user-badge" title="Utilisateur actif" style="margin-right:8px;">—</span>
       <button class="tab-button icon" data-tab="prefs" aria-label="Préférences" title="Préférences">🛠️</button>
     </div>
@@ -22,16 +28,17 @@
       <select id="deckSelect" class="deck-select"></select>
       <button id="gotoManageBtn" class="tab-button icon" aria-label="Vocabulaire" title="Vocabulaire" style="margin-left:8px;">⚙️</button>
       <span style="width:1px;height:24px;background:var(--border);display:inline-block;margin:0 6px;"></span>
-      <label for="userSelect">Utilisateur:</label>
-      <select id="userSelect" class="deck-select"></select>
-      <button id="gotoUsersHeaderBtn" class="tab-button icon" aria-label="Utilisateurs" title="Utilisateurs" style="margin-left:6px;">👤</button>
+      <label class="checkbox" title="Rendre ce vocabulaire privé (non partagé)">
+        <input id="deckPrivacyCheckbox" type="checkbox" />
+        <span>Privé</span>
+      </label>
     </div>
   </header>
 
   <main class="container">
     <nav class="tabs">
       <button class="tab-button active" data-tab="review">Révision</button>
-      <button class="tab-button" data-tab="stats">Statistiques</button>
+      <button id="statsTabBtn" class="tab-button" data-tab="stats">Statistiques</button>
     </nav>
 
     <section id="manage" class="tab">
@@ -164,8 +171,12 @@
         <div class="field" style="margin-top:14px;">
           <label for="themeSelect">Thème</label>
           <select id="themeSelect" class="deck-select">
-            <option value="dark">Nuit</option>
-            <option value="light">Jour</option>
+            <option value="dark">🌙 Nuit</option>
+            <option value="light">☀️ Jour</option>
+            <option value="kids">🎨 Kids Sport</option>
+            <option value="jungle">🌿 Jungle</option>
+            <option value="matrix">💚 Matrix</option>
+            <option value="forest">🌲 Forêt</option>
           </select>
           <small class="hint">Le thème Nuit conserve le style actuel. Le thème Jour applique un style clair.</small>
         </div>
@@ -225,33 +236,6 @@
       </div>
     </section>
 
-    <section id="users" class="tab">
-      <div class="form-row" style="align-items:center;justify-content:flex-start;margin-bottom:8px;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <label style="margin:0;color:var(--muted);font-size:13px;">Utilisateur actif:</label>
-          <span id="currentUserNameTop" class="badge user-badge">—</span>
-          <button id="gotoUsersBtn" class="tab-button icon" aria-label="Utilisateur" title="Utilisateur" style="margin-left:6px;">👤</button>
-        </div>
-      </div>
-      <div class="card">
-        <button class="tab-button icon card-close" data-tab="review" aria-label="Fermer" title="Fermer">❌</button>
-        <div class="card-header">
-          <h2>Gestion des utilisateurs</h2>
-        </div>
-        <div class="field">
-          <small class="hint">L’utilisateur actif se règle dans l’en-tête. Ici vous pouvez ajouter et supprimer des utilisateurs.</small>
-        </div>
-        <div class="form-row" style="margin-top:12px;gap:8px;">
-          <button id="newUserBtn" class="secondary">Nouvel utilisateur</button>
-          <button id="deleteUserBtn" class="danger" title="Supprimer l’utilisateur (si aucun historique)">Supprimer utilisateur</button>
-        </div>
-        <div class="field" style="margin-top:12px;">
-          <label>Utilisateurs existants</label>
-          <ul id="usersList" class="words-list"></ul>
-          <small class="hint">Seul un utilisateur sans historique peut être supprimé.</small>
-        </div>
-      </div>
-    </section>
   </main>
 
   <footer class="app-footer">
