@@ -1739,6 +1739,13 @@
     // Créer le HTML pour les stats
     let statsHtml = '<h4>Statistiques d\'entraînement</h4>';
     statsHtml += `<p class="training-summary">Juste du premier coup : <strong>${firstTryPct}%</strong> (${firstTryCorrect}/${totalWords} mots)</p>`;
+    
+    // Ajouter bouton "J'ai les crocs !" si nécessaire
+    const difficultWords = wordStats.filter(stat => stat.attempts > 1);
+    if (difficultWords.length > 0) {
+      statsHtml += `<button id="continueTrainingBtn" class="primary continue-training-btn">J'ai les crocs !</button>`;
+    }
+    
     statsHtml += '<div class="training-stats">';
     
     for (const stat of wordStats) {
