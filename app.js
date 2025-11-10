@@ -1508,6 +1508,8 @@
     return words.find(w => w.id === id);
   }
 
+  let lastTrainingData = null; // Pour stocker les données de la dernière session d'entraînement
+
   function renderCurrentQuestion() {
     if (!session) return;
     if (session.index >= session.pool.length) {
@@ -1517,6 +1519,11 @@
         finalScore.textContent = String(session.score);
         quizArea.classList.add('hidden');
         reviewDone.classList.remove('hidden');
+        // Sauvegarder les données d'entraînement avant de terminer la session
+        lastTrainingData = {
+          trainingMode: session.trainingMode,
+          trainingAttempts: session.trainingAttempts
+        };
         // Afficher les statistiques d'entraînement
         renderTrainingStats();
         // Also post to server history if available (but not in training mode)
@@ -1713,11 +1720,11 @@
   }
 
   function renderTrainingStats() {
-    if (!session || !session.trainingMode) return;
+    if (!lastTrainingData || !lastTrainingData.trainingMode) return;
     
     // Créer une liste des mots triés par nombre d'essais
     const wordStats = [];
-    for (const [wordId, attempts] of Object.entries(session.trainingAttempts)) {
+    for (const [wordId, attempts] of Object.entries(lastTrainingData.trainingAttempts)) {
       const word = findWordById(wordId);
       if (word) {
         wordStats.push({
@@ -1771,6 +1778,32 @@
     } else {
       reviewDone.innerHTML += statsHtml;
     }
+    
+    // Ajouter l'événement pour le bouton Continuer
+    const continueBtn = document.getElementById('continueTrainingBtn');
+    if (continueBtn) {
+      continueBtn.addEventListener('click', continueTraining);
+    }
+  }
+
+  function continueTraining() {
+    if (!lastTrainingData || !lastTrainingData.trainingMode) return;
+    
+    // Créer la liste des mots difficiles (plus d'1 essai)
+    const difficultWords = [];
+    for (const [wordId, attempts] of Object.entries(lastTrainingData.trainingAttempts)) {
+      if (attempts > 1) {
+        const word = findWordById(wordId);
+        if (word) {
+          difficultWords.push(word);
+        }
+      }
+    }
+    
+    if (difficultWords.length === 0) return;
+    
+    // Lancer une nouvelle session d'entraînement avec ces mots
+    startSession(difficultWords);
   }
 
   function trackPerWordStat(word, { correct, elapsedMs }) {
