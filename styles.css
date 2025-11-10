@@ -922,10 +922,17 @@ button[aria-pressed="true"] { outline: 2px solid rgba(96, 165, 250, 0.35); }
 }
 
 /* Training stats styles */
-.training-stats {
-  margin-top: 16px;
-  display: grid;
-  gap: 8px;
+.training-summary {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.training-summary strong {
+  color: var(--primary);
+  font-weight: 700;
 }
 
 .training-stat-item {

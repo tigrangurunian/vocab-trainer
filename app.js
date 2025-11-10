@@ -1731,8 +1731,14 @@
     // Trier par nombre d'essais décroissant
     wordStats.sort((a, b) => b.attempts - a.attempts);
     
+    // Calculer le pourcentage de juste du premier coup
+    const totalWords = wordStats.length;
+    const firstTryCorrect = wordStats.filter(stat => stat.attempts === 1).length;
+    const firstTryPct = totalWords > 0 ? Math.round((firstTryCorrect / totalWords) * 100) : 0;
+    
     // Créer le HTML pour les stats
     let statsHtml = '<h4>Statistiques d\'entraînement</h4>';
+    statsHtml += `<p class="training-summary">Juste du premier coup : <strong>${firstTryPct}%</strong> (${firstTryCorrect}/${totalWords} mots)</p>`;
     statsHtml += '<div class="training-stats">';
     
     for (const stat of wordStats) {
