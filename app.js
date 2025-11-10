@@ -37,6 +37,7 @@
   const userBadge = document.getElementById('userBadge');
 
   const startReviewBtn = document.getElementById('startReviewBtn');
+  const trainingToggle = document.getElementById('trainingToggle');
   const shuffleToggle = document.getElementById('shuffleToggle');
   const reviewEmpty = document.getElementById('reviewEmpty');
   const quizArea = document.getElementById('quizArea');
@@ -536,11 +537,11 @@
   function loadPrefs() {
     try {
       const raw = localStorage.getItem(PREFS_KEY);
-      const prefs = raw ? JSON.parse(raw) : { shuffle: true, fireworks: true, theme: 'dark', mascot: '🦊', ttsLang: 'en', ttsProvider: 'web', celebrateImageEnabled: false, celebrateImageData: null };
+      const prefs = raw ? JSON.parse(raw) : { shuffle: true, fireworks: true, theme: 'dark', mascot: '🦊', ttsLang: 'en', ttsProvider: 'web', celebrateImageEnabled: false, celebrateImageData: null, trainingMode: false };
       console.log('[loadPrefs] Loaded preferences:', prefs);
       return prefs;
     } catch (e) {
-      return { shuffle: true, fireworks: true, theme: 'dark', mascot: '🦊', ttsLang: 'en', ttsProvider: 'web', celebrateImageEnabled: false, celebrateImageData: null };
+      return { shuffle: true, fireworks: true, theme: 'dark', mascot: '🦊', ttsLang: 'en', ttsProvider: 'web', celebrateImageEnabled: false, celebrateImageData: null, trainingMode: false };
     }
   }
 
@@ -1365,6 +1366,17 @@
     applyShuffleButton();
   });
 
+  // Training mode toggle
+  function applyTrainingButton() {
+    trainingToggle.setAttribute('aria-pressed', prefs.trainingMode ? 'true' : 'false');
+    trainingToggle.textContent = `Entraînement: ${prefs.trainingMode ? 'ON' : 'OFF'}`;
+  }
+  trainingToggle.addEventListener('click', () => {
+    prefs.trainingMode = !prefs.trainingMode;
+    savePrefs();
+    applyTrainingButton();
+  });
+
   // Review session
   function shuffle(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -1464,7 +1476,7 @@
   }
 
   function startSession(sourceWords) {
-    const pool = sourceWords.map(w => ({ id: w.id }));
+    const pool = sourceWords.map(w => ({ id: w.id, attempts: 0 }));
     if (prefs.shuffle) shuffle(pool);
     session = {
       round: 1,
@@ -1476,6 +1488,8 @@
       totalQuestions: pool.length,
       stats: initSessionStats(sourceWords),
       currentShownAt: null,
+      trainingMode: prefs.trainingMode,
+      trainingAttempts: {}, // { wordId: attemptCount }
     };
 
     quizArea.classList.remove('hidden');
@@ -1484,7 +1498,7 @@
     scoreEl.textContent = '0';
     questionIndexEl.textContent = '1';
     questionTotalEl.textContent = String(pool.length);
-    roundNumEl.textContent = '1';
+    roundNumEl.textContent = prefs.trainingMode ? 'Entraînement' : '1';
     // Disable the Start Review button while a session is running
     if (startReviewBtn) startReviewBtn.disabled = true;
     renderCurrentQuestion();
@@ -1497,44 +1511,60 @@
   function renderCurrentQuestion() {
     if (!session) return;
     if (session.index >= session.pool.length) {
-      // fin de round
-      if (session.errorsNextRound.length) {
-        session.round += 1;
-        session.pool = session.errorsNextRound.map(id => ({ id }));
-        if (prefs.shuffle) shuffle(session.pool);
-        session.index = 0;
-        session.errorsNextRound = [];
-        scoreEl.textContent = '0';
-        session.score = 0;
-        questionIndexEl.textContent = '1';
-        questionTotalEl.textContent = String(session.pool.length);
-        roundNumEl.textContent = String(session.round);
-        feedback.innerHTML = '';
-        renderCurrentQuestion();
-        return;
-      } else {
-        // terminé
+      // fin de session
+      if (session.trainingMode) {
+        // En mode entraînement, on termine directement
         finalScore.textContent = String(session.score);
         quizArea.classList.add('hidden');
         reviewDone.classList.remove('hidden');
-        // Ensure list view shows updated error counters when user returns
-        renderWords();
-        // enregistrer l'historique de session
-        finalizeAndStoreSessionHistory();
-        // Also post to server history if available
-        try {
-          if (window.api && typeof window.api.createReview === 'function') {
-            const last = history[history.length - 1];
-            if (last) window.api.createReview(last).catch((e)=>console.warn('createReview failed:', e));
-          }
-        } catch (e) { console.warn('createReview failed:', e); }
+        // Afficher les statistiques d'entraînement
+        renderTrainingStats();
+        // Also post to server history if available (but not in training mode)
         renderHistory();
         renderStatsChart();
         renderUsersList();
-        // Re-enable the Start Review button at the end of the session
+        // Re-enable the Start Review button
         if (startReviewBtn) startReviewBtn.disabled = false;
         session = null;
         return;
+      } else {
+        // Mode normal : vérifier s'il y a des erreurs à reposer
+        if (session.errorsNextRound.length) {
+          session.round += 1;
+          session.pool = session.errorsNextRound.map(id => ({ id }));
+          if (prefs.shuffle) shuffle(session.pool);
+          session.index = 0;
+          session.errorsNextRound = [];
+          scoreEl.textContent = '0';
+          session.score = 0;
+          questionIndexEl.textContent = '1';
+          questionTotalEl.textContent = String(session.pool.length);
+          roundNumEl.textContent = String(session.round);
+          feedback.innerHTML = '';
+          renderCurrentQuestion();
+          return;
+        } else {
+          // terminé
+          finalScore.textContent = String(session.score);
+          quizArea.classList.add('hidden');
+          reviewDone.classList.remove('hidden');
+          // enregistrer l'historique de session
+          finalizeAndStoreSessionHistory();
+          // Also post to server history if available
+          try {
+            if (window.api && typeof window.api.createReview === 'function') {
+              const last = history[history.length - 1];
+              if (last) window.api.createReview(last).catch((e)=>console.warn('createReview failed:', e));
+            }
+          } catch (e) { console.warn('createReview failed:', e); }
+          renderHistory();
+          renderStatsChart();
+          renderUsersList();
+          // Re-enable the Start Review button at the end of the session
+          if (startReviewBtn) startReviewBtn.disabled = false;
+          session = null;
+          return;
+        }
       }
     }
 
@@ -1587,7 +1617,18 @@
     // collect timing for this question
     const now = performance.now();
     const elapsedMs = session.currentShownAt ? Math.max(0, now - session.currentShownAt) : 0;
-    trackPerWordStat(w, { correct: ok, elapsedMs });
+    
+    // Incrémenter le compteur d'essais pour ce mot
+    if (!session.trainingAttempts[qid]) {
+      session.trainingAttempts[qid] = 0;
+    }
+    session.trainingAttempts[qid]++;
+    
+    if (!session.trainingMode) {
+      // Mode normal : enregistrer les stats
+      trackPerWordStat(w, { correct: ok, elapsedMs });
+    }
+    
     if (ok) {
       feedback.innerHTML = `<span class="ok">Correct ✔</span>`;
       session.score += 1;
@@ -1616,10 +1657,14 @@
         <div class="expected-big">${w.en.map(escapeHtml).join(', ')}</div>
         <div class="hint" style="margin-top:8px;color:var(--muted)">Appuyez sur la barre d'espace pour continuer</div>
       `;
-      incErrorsForCurrentUser(w);
-      saveWords();
-      // Reposer ce mot au round suivant
-      session.errorsNextRound.push(w.id);
+      
+      if (!session.trainingMode) {
+        // Mode normal : incrémenter les erreurs et ajouter au round suivant
+        incErrorsForCurrentUser(w);
+        saveWords();
+        // Reposer ce mot au round suivant
+        session.errorsNextRound.push(w.id);
+      }
       // Speak only the correct English answer (no French praise)
       speakCorrectAnswer(w);
       // Désactiver la saisie et le bouton pendant l'attente de la barre d'espace
@@ -1639,9 +1684,17 @@
           window.removeEventListener('keydown', onSpace);
           session.continueHandler = null;
           session.waitingForSpace = false;
-          session.index += 1;
-          feedback.innerHTML = '';
-          renderCurrentQuestion();
+          
+          if (session.trainingMode) {
+            // En mode entraînement, reposer la même question
+            feedback.innerHTML = '';
+            renderCurrentQuestion();
+          } else {
+            // Mode normal : passer à la suivante
+            session.index += 1;
+            feedback.innerHTML = '';
+            renderCurrentQuestion();
+          }
         };
         session.continueHandler = onSpace;
         window.addEventListener('keydown', onSpace);
@@ -1657,6 +1710,54 @@
       map[w.id] = { fr: w.fr, en: [...w.en], attempts: 0, errors: 0, sumMs: 0 };
     }
     return map;
+  }
+
+  function renderTrainingStats() {
+    if (!session || !session.trainingMode) return;
+    
+    // Créer une liste des mots triés par nombre d'essais
+    const wordStats = [];
+    for (const [wordId, attempts] of Object.entries(session.trainingAttempts)) {
+      const word = findWordById(wordId);
+      if (word) {
+        wordStats.push({
+          fr: word.fr,
+          en: word.en,
+          attempts: attempts
+        });
+      }
+    }
+    
+    // Trier par nombre d'essais décroissant
+    wordStats.sort((a, b) => b.attempts - a.attempts);
+    
+    // Créer le HTML pour les stats
+    let statsHtml = '<h4>Statistiques d\'entraînement</h4>';
+    statsHtml += '<div class="training-stats">';
+    
+    for (const stat of wordStats) {
+      const status = stat.attempts === 1 ? 'success' : stat.attempts <= 3 ? 'warning' : 'error';
+      statsHtml += `
+        <div class="training-stat-item ${status}">
+          <div class="question-answer">
+            <span class="word">${stat.fr}</span>
+            <span class="arrow">→</span>
+            <span class="answer">${stat.en.join(', ')}</span>
+          </div>
+          <span class="attempts">${stat.attempts} essai${stat.attempts > 1 ? 's' : ''}</span>
+        </div>
+      `;
+    }
+    
+    statsHtml += '</div>';
+    
+    // Remplacer le contenu de reviewDone
+    const doneContent = reviewDone.querySelector('h3, p');
+    if (doneContent) {
+      doneContent.insertAdjacentHTML('afterend', statsHtml);
+    } else {
+      reviewDone.innerHTML += statsHtml;
+    }
   }
 
   function trackPerWordStat(word, { correct, elapsedMs }) {
@@ -1984,6 +2085,7 @@
 
   // Initial render
   applyShuffleButton();
+  applyTrainingButton();
   applyTheme();
   renderUsers();
   applyUserBadge();

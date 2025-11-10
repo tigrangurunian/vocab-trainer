@@ -920,3 +920,58 @@ button[aria-pressed="true"] { outline: 2px solid rgba(96, 165, 250, 0.35); }
   .words-list li { grid-template-columns: 1fr; align-items: start; }
   .form-row { flex-direction: column; align-items: stretch; }
 }
+
+/* Training stats styles */
+.training-stats {
+  margin-top: 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.training-stat-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 96%, white 4%);
+  font-size: 14px;
+}
+
+.question-answer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.question-answer .word {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.question-answer .arrow {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.question-answer .answer {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.training-stat-item.success {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--panel));
+}
+
+.training-stat-item.warning {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, var(--panel));
+}
+
+.training-stat-item.error {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--panel));
+}
